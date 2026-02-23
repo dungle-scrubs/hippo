@@ -1,0 +1,106 @@
+import type { Database } from "better-sqlite3";
+
+/** LLM completion interface — same contract as marrow's LlmClient. */
+export interface LlmClient {
+	/**
+	 * Send messages with a system prompt and get a text response.
+	 *
+	 * @param messages - Conversation messages (role/content pairs)
+	 * @param systemPrompt - System-level instruction
+	 * @param signal - Optional abort signal
+	 * @returns The model's text response
+	 */
+	complete(
+		messages: readonly LlmMessage[],
+		systemPrompt: string,
+		signal?: AbortSignal,
+	): Promise<string>;
+}
+
+/** Minimal message shape for LLM calls. */
+export interface LlmMessage {
+	readonly content: string;
+	readonly role: "assistant" | "user";
+}
+
+/** Embedding function injected by the consumer. */
+export type EmbedFn = (text: string) => Promise<Float32Array>;
+
+/** Chunk kind discriminator. */
+export type ChunkKind = "fact" | "memory";
+
+/** A row from the chunks table. */
+export interface Chunk {
+	readonly access_count: number;
+	readonly agent_id: string;
+	readonly content: string;
+	readonly content_hash: string | null;
+	readonly created_at: string;
+	readonly embedding: Buffer;
+	readonly id: string;
+	readonly kind: ChunkKind;
+	readonly last_accessed_at: string;
+	readonly metadata: string | null;
+	readonly encounter_count: number;
+	readonly running_intensity: number;
+	readonly superseded_by: string | null;
+}
+
+/** A row from the memory_blocks table. */
+export interface MemoryBlock {
+	readonly agent_id: string;
+	readonly key: string;
+	readonly updated_at: string;
+	readonly value: string;
+}
+
+/** Parsed metadata attached to a chunk. */
+export interface ChunkMetadata {
+	readonly category?: string;
+	readonly source?: string;
+	readonly tags?: readonly string[];
+}
+
+/** A single extracted fact from the LLM extraction pipeline. */
+export interface ExtractedFact {
+	readonly fact: string;
+	readonly intensity: number;
+}
+
+/** Classification result for conflict resolution. */
+export type ConflictClassification = "DISTINCT" | "DUPLICATE" | "SUPERSEDES";
+
+/** Result of a search query against chunks. */
+export interface SearchResult {
+	readonly chunk: Chunk;
+	readonly score: number;
+}
+
+/** Options for creating hippo tools. */
+export interface HippoOptions {
+	readonly agentId: string;
+	readonly db: Database;
+	readonly embed: EmbedFn;
+	readonly llm: LlmClient;
+	readonly messagesTable?: string;
+}
+
+/** Result summary returned by remember_facts. */
+export interface RememberFactsResult {
+	readonly facts: readonly RememberFactAction[];
+}
+
+/** Action taken for a single extracted fact. */
+export type RememberFactAction =
+	| { readonly action: "inserted"; readonly content: string; readonly intensity: number }
+	| {
+			readonly action: "reinforced";
+			readonly content: string;
+			readonly newIntensity: number;
+			readonly oldIntensity: number;
+	  }
+	| {
+			readonly action: "superseded";
+			readonly content: string;
+			readonly oldContent: string;
+	  };

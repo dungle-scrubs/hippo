@@ -20,6 +20,7 @@
 	"dependencies": {
 		"@mariozechner/pi-agent-core": "0.52.12",
 		"@mariozechner/pi-ai": "0.52.12",
+		"@sinclair/typebox": "^0.34.48",
 		"better-sqlite3": "^12.6.2"
 	},
 	"devDependencies": {

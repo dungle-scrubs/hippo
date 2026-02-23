@@ -1,0 +1,96 @@
+import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import { Type } from "@mariozechner/pi-ai";
+import type { Database } from "better-sqlite3";
+
+const Params = Type.Object({
+	limit: Type.Optional(
+		Type.Number({ description: "Max results to return (default: 20)", minimum: 1 }),
+	),
+	query: Type.String({ description: "Search term for past messages" }),
+});
+
+/** A row from the messages FTS search. */
+interface MessageSearchRow {
+	readonly content: string;
+	readonly created_at?: string;
+	readonly role?: string;
+}
+
+/** Options for creating the recall_conversation tool. */
+export interface RecallConversationToolOptions {
+	readonly db: Database;
+	readonly messagesTable: string;
+}
+
+/**
+ * Create the recall_conversation tool.
+ *
+ * Full-text search over past messages using FTS5.
+ * The consumer (marrow) is responsible for creating the messages table
+ * and FTS index.
+ *
+ * @param opts - Tool options
+ * @returns AgentTool instance
+ */
+export function createRecallConversationTool(
+	opts: RecallConversationToolOptions,
+): AgentTool<typeof Params> {
+	const ftsTable = `${opts.messagesTable}_fts`;
+
+	return {
+		description:
+			"Full-text search over past conversation messages. Returns matching messages ranked by relevance.",
+		execute: async (_toolCallId, params) => {
+			const limit = params.limit ?? 20;
+
+			let rows: MessageSearchRow[];
+			try {
+				rows = opts.db
+					.prepare(
+						`SELECT m.role, m.content, m.created_at
+						FROM ${ftsTable} fts
+						JOIN ${opts.messagesTable} m ON fts.rowid = m.id
+						WHERE ${ftsTable} MATCH ?
+						ORDER BY rank
+						LIMIT ?`,
+					)
+					.all(params.query, limit) as MessageSearchRow[];
+			} catch {
+				// FTS table may not exist or query may be malformed
+				const result: AgentToolResult<{ error: string }> = {
+					content: [
+						{
+							text: "Conversation search unavailable (FTS index may not exist).",
+							type: "text",
+						},
+					],
+					details: { error: "fts_unavailable" },
+				};
+				return result;
+			}
+
+			if (rows.length === 0) {
+				const result: AgentToolResult<{ matches: number }> = {
+					content: [{ text: "No matching messages found.", type: "text" }],
+					details: { matches: 0 },
+				};
+				return result;
+			}
+
+			const lines = rows.map((r, i) => {
+				const prefix = r.role ? `[${r.role}]` : "";
+				const date = r.created_at ? ` (${r.created_at})` : "";
+				return `${i + 1}. ${prefix}${date} ${r.content}`;
+			});
+
+			const result: AgentToolResult<{ matches: number }> = {
+				content: [{ text: lines.join("\n"), type: "text" }],
+				details: { matches: rows.length },
+			};
+			return result;
+		},
+		label: "Recall Conversation",
+		name: "recall_conversation",
+		parameters: Params,
+	};
+}
