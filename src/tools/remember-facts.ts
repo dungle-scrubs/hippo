@@ -2,7 +2,7 @@ import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import { type DbStatements, getActiveChunks } from "../db.js";
 import { classifyConflict, extractFacts } from "../extractor.js";
-import { bufferToEmbedding, cosineSimilarity, embeddingToBuffer } from "../similarity.js";
+import { chunkEmbedding, cosineSimilarity, embeddingToBuffer } from "../similarity.js";
 import { updatedIntensity } from "../strength.js";
 import type {
 	Chunk,
@@ -240,13 +240,10 @@ function findTopCandidates(
 	existingChunks: readonly Chunk[],
 	topK: number,
 ): readonly ScoredCandidate[] {
-	const scored: ScoredCandidate[] = existingChunks.map((chunk) => {
-		const chunkEmbedding = bufferToEmbedding(chunk.embedding as unknown as Buffer);
-		return {
-			chunk,
-			similarity: cosineSimilarity(queryEmbedding, chunkEmbedding),
-		};
-	});
+	const scored: ScoredCandidate[] = existingChunks.map((chunk) => ({
+		chunk,
+		similarity: cosineSimilarity(queryEmbedding, chunkEmbedding(chunk)),
+	}));
 
 	scored.sort((a, b) => b.similarity - a.similarity);
 	return scored.slice(0, topK);

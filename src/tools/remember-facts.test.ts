@@ -277,6 +277,76 @@ describe("remember_facts", () => {
 		expect(chunks).toHaveLength(2);
 	});
 
+	it("uses LLM classification in ambiguous band and handles DUPLICATE", async () => {
+		// Similarity in the ambiguous 0.78–0.93 band, LLM returns DUPLICATE
+		const existingEmbed = new Float32Array([0.9, 0.4, 0.1, 0]);
+		insertFact(stmts, "User dislikes Redux", existingEmbed);
+
+		const llm = mockLlm('[{"fact": "User hates Redux", "intensity": 0.9}]', "DUPLICATE");
+
+		const queryEmbed = new Float32Array([0.6, 0.7, 0.3, 0.1]);
+		const embed: EmbedFn = vi.fn(async () => queryEmbed);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "I hate Redux" });
+
+		expect(result.details.facts[0]?.action).toBe("reinforced");
+		// 2 LLM calls: extraction + classification
+		expect(llm.complete).toHaveBeenCalledTimes(2);
+
+		// Only one chunk — reinforced, not duplicated
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]?.encounter_count).toBe(2);
+	});
+
+	it("ignores facts from other agents during conflict resolution", async () => {
+		// Insert a fact for a different agent with the same embedding
+		const otherAgentId = "other-agent";
+		const now = new Date().toISOString();
+		stmts.insertChunk.run({
+			access_count: 0,
+			agent_id: otherAgentId,
+			content: "Other agent's fact",
+			content_hash: null,
+			created_at: now,
+			embedding: embeddingToBuffer(FIXED_EMBED),
+			encounter_count: 1,
+			id: ulid(),
+			kind: "fact",
+			last_accessed_at: now,
+			metadata: null,
+			running_intensity: 0.5,
+		});
+
+		const llm = mockLlm('[{"fact": "My fact", "intensity": 0.5}]');
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "My fact" });
+
+		// Should be inserted as new — other agent's fact is invisible
+		expect(result.details.facts[0]?.action).toBe("inserted");
+
+		// Our agent has 1 chunk, other agent still has 1
+		const ours = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(ours).toHaveLength(1);
+		const theirs = db
+			.prepare("SELECT * FROM chunks WHERE agent_id = ?")
+			.all(otherAgentId) as Chunk[];
+		expect(theirs).toHaveLength(1);
+	});
+
 	it("propagates LLM extraction errors", async () => {
 		const llm: LlmClient = {
 			complete: vi.fn().mockRejectedValue(new Error("API quota exceeded")),
