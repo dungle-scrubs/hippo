@@ -55,4 +55,4 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 
 export { initSchema } from "./schema.js";
 // Re-export types for consumers
-export type { ChunkKind, EmbedFn, HippoOptions, LlmClient, LlmMessage } from "./types.js";
+export type { ChunkKind, EmbedFn, HippoOptions, LlmClient } from "./types.js";

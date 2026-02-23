@@ -1,7 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import { type DbStatements, getActiveChunks } from "../db.js";
-import { embedText } from "../embed.js";
 import { classifyConflict, extractFacts } from "../extractor.js";
 import { bufferToEmbedding, cosineSimilarity, embeddingToBuffer } from "../similarity.js";
 import { updatedIntensity } from "../strength.js";
@@ -58,10 +57,12 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 				return result;
 			}
 
-			const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact");
 			const actions: RememberFactAction[] = [];
 
 			for (const { fact, intensity } of extracted) {
+				// Re-query each iteration so facts inserted/reinforced earlier
+				// in this batch are visible to subsequent conflict checks.
+				const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact");
 				const action = await processFact(fact, intensity, existingFacts, opts, signal);
 				actions.push(action);
 			}
@@ -113,7 +114,7 @@ async function processFact(
 	signal?: AbortSignal,
 ): Promise<RememberFactAction> {
 	const now = new Date().toISOString();
-	const embedding = await embedText(fact, opts.embed);
+	const embedding = await opts.embed(fact);
 
 	// Find top candidates by similarity
 	const candidates = findTopCandidates(embedding, existingFacts, TOP_K_CANDIDATES);

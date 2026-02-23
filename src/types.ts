@@ -1,26 +1,22 @@
+import type { Message } from "@mariozechner/pi-ai";
 import type { Database } from "better-sqlite3";
 
-/** LLM completion interface — same contract as marrow's LlmClient. */
+/**
+ * LLM completion interface — structurally compatible with marrow's LlmClient.
+ *
+ * Accepts pi-ai's Message[] so marrow's OpenRouterLlmClient can be passed
+ * directly without an adapter.
+ */
 export interface LlmClient {
 	/**
 	 * Send messages with a system prompt and get a text response.
 	 *
-	 * @param messages - Conversation messages (role/content pairs)
+	 * @param messages - pi-ai Message array (UserMessage | AssistantMessage | ToolResultMessage)
 	 * @param systemPrompt - System-level instruction
 	 * @param signal - Optional abort signal
 	 * @returns The model's text response
 	 */
-	complete(
-		messages: readonly LlmMessage[],
-		systemPrompt: string,
-		signal?: AbortSignal,
-	): Promise<string>;
-}
-
-/** Minimal message shape for LLM calls. */
-export interface LlmMessage {
-	readonly content: string;
-	readonly role: "assistant" | "user";
+	complete(messages: Message[], systemPrompt: string, signal?: AbortSignal): Promise<string>;
 }
 
 /** Embedding function injected by the consumer. */
@@ -52,13 +48,6 @@ export interface MemoryBlock {
 	readonly key: string;
 	readonly updated_at: string;
 	readonly value: string;
-}
-
-/** Parsed metadata attached to a chunk. */
-export interface ChunkMetadata {
-	readonly category?: string;
-	readonly source?: string;
-	readonly tags?: readonly string[];
 }
 
 /** A single extracted fact from the LLM extraction pipeline. */

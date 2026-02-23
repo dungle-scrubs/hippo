@@ -86,4 +86,16 @@ describe("store_memory", () => {
 		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
 		expect(chunks).toHaveLength(2);
 	});
+
+	it("propagates embed errors — nothing stored", async () => {
+		const failEmbed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding API down"));
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: failEmbed, stmts });
+
+		await expect(tool.execute("tc1", { content: "should not persist" })).rejects.toThrow(
+			"Embedding API down",
+		);
+
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
+		expect(chunks).toHaveLength(0);
+	});
 });

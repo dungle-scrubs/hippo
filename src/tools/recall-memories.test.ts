@@ -169,4 +169,11 @@ describe("recall_memories", () => {
 		expect(kinds).toContain("fact");
 		expect(kinds).toContain("memory");
 	});
+
+	it("propagates embed errors", async () => {
+		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embed timeout"));
+		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
+
+		await expect(tool.execute("tc1", { query: "test" })).rejects.toThrow("Embed timeout");
+	});
 });

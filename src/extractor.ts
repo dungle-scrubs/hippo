@@ -1,4 +1,15 @@
+import type { UserMessage } from "@mariozechner/pi-ai";
 import type { ConflictClassification, ExtractedFact, LlmClient } from "./types.js";
+
+/**
+ * Build a pi-ai UserMessage from text content.
+ *
+ * @param content - Message text
+ * @returns UserMessage compatible with pi-ai's Message type
+ */
+function userMessage(content: string): UserMessage {
+	return { content, role: "user", timestamp: Date.now() };
+}
 
 const EXTRACTION_SYSTEM_PROMPT = `You extract discrete facts from user text and rate each fact's intensity.
 
@@ -45,11 +56,7 @@ export async function extractFacts(
 	llm: LlmClient,
 	signal?: AbortSignal,
 ): Promise<readonly ExtractedFact[]> {
-	const response = await llm.complete(
-		[{ role: "user", content: text }],
-		EXTRACTION_SYSTEM_PROMPT,
-		signal,
-	);
+	const response = await llm.complete([userMessage(text)], EXTRACTION_SYSTEM_PROMPT, signal);
 
 	const parsed = parseJsonArray(response);
 	if (!parsed) {
@@ -81,11 +88,7 @@ export async function classifyConflict(
 ): Promise<ConflictClassification> {
 	const prompt = `New fact: "${newFact}"\nExisting fact: "${existingFact}"`;
 
-	const response = await llm.complete(
-		[{ role: "user", content: prompt }],
-		CLASSIFICATION_SYSTEM_PROMPT,
-		signal,
-	);
+	const response = await llm.complete([userMessage(prompt)], CLASSIFICATION_SYSTEM_PROMPT, signal);
 
 	const classification = response.trim().toUpperCase();
 	if (

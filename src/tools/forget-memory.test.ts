@@ -131,4 +131,66 @@ describe("forget_memory", () => {
 		const row = db.prepare("SELECT * FROM chunks WHERE id = ?").get(id);
 		expect(row).toBeUndefined();
 	});
+
+	it("resurrects superseded chunks when their superseder is forgotten", async () => {
+		const target = new Float32Array([1, 0, 0, 0]);
+
+		// Insert fact A, then supersede it with fact B
+		const idA = insertChunk(stmts, "User lives in Berlin", "fact", target);
+		const idB = insertChunk(stmts, "User lives in Bangkok", "fact", target);
+		stmts.supersedeChunk.run(idB, idA);
+
+		// Verify A is superseded
+		const beforeA = db.prepare("SELECT * FROM chunks WHERE id = ?").get(idA) as Chunk;
+		expect(beforeA.superseded_by).toBe(idB);
+
+		// Forget B (the superseding fact)
+		const embed: EmbedFn = vi.fn(async () => target);
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		await tool.execute("tc1", { description: "Bangkok" });
+
+		// B should be deleted
+		const rowB = db.prepare("SELECT * FROM chunks WHERE id = ?").get(idB);
+		expect(rowB).toBeUndefined();
+
+		// A should be resurrected (superseded_by cleared)
+		const afterA = db.prepare("SELECT * FROM chunks WHERE id = ?").get(idA) as Chunk;
+		expect(afterA.superseded_by).toBeNull();
+	});
+
+	it("cannot forget already-superseded chunks (they are excluded from search)", async () => {
+		const target = new Float32Array([1, 0, 0, 0]);
+
+		// A superseded by B — A is invisible to getActiveChunks
+		const idA = insertChunk(stmts, "User lives in Berlin", "fact", target);
+		const idB = insertChunk(stmts, "User lives in Bangkok", "fact", target);
+		stmts.supersedeChunk.run(idB, idA);
+
+		const embed: EmbedFn = vi.fn(async () => target);
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+
+		// Forget with an embedding that matches both — only B is active
+		const result = await tool.execute("tc1", { description: "living location" });
+
+		// B deleted, A resurrected
+		expect(result.details.deleted).toBe(1);
+		const rowB = db.prepare("SELECT * FROM chunks WHERE id = ?").get(idB);
+		expect(rowB).toBeUndefined();
+		const rowA = db.prepare("SELECT * FROM chunks WHERE id = ?").get(idA) as Chunk;
+		expect(rowA.superseded_by).toBeNull();
+	});
+
+	it("propagates embed errors — nothing deleted", async () => {
+		const target = new Float32Array([1, 0, 0, 0]);
+		insertChunk(stmts, "Should survive", "fact", target);
+
+		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embed down"));
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+
+		await expect(tool.execute("tc1", { description: "test" })).rejects.toThrow("Embed down");
+
+		// Chunk should still exist — nothing was deleted
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
+		expect(chunks).toHaveLength(1);
+	});
 });

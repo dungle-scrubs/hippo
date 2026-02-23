@@ -3,9 +3,11 @@ import type { Chunk } from "./types.js";
 
 /** Prepared statement cache, lazily built per database handle. */
 export interface DbStatements {
+	readonly clearSupersededBy: Statement;
 	readonly deleteChunk: Statement;
 	readonly getActiveChunksByAgent: Statement;
 	readonly getBlockByKey: Statement;
+	readonly getMemoryByHash: Statement;
 	readonly insertChunk: Statement;
 	readonly reinforceChunk: Statement;
 	readonly supersedeChunk: Statement;
@@ -21,6 +23,8 @@ export interface DbStatements {
  */
 export function prepareStatements(db: Database): DbStatements {
 	return {
+		clearSupersededBy: db.prepare("UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ?"),
+
 		deleteChunk: db.prepare("DELETE FROM chunks WHERE id = ?"),
 
 		getActiveChunksByAgent: db.prepare(`
@@ -30,6 +34,10 @@ export function prepareStatements(db: Database): DbStatements {
 		`),
 
 		getBlockByKey: db.prepare("SELECT * FROM memory_blocks WHERE agent_id = ? AND key = ?"),
+
+		getMemoryByHash: db.prepare(
+			"SELECT * FROM chunks WHERE agent_id = ? AND content_hash = ? AND kind = 'memory' AND superseded_by IS NULL",
+		),
 
 		insertChunk: db.prepare(`
 			INSERT INTO chunks (id, agent_id, content, content_hash, embedding, metadata,

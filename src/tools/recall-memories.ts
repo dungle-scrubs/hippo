@@ -1,7 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import { type DbStatements, getActiveChunks } from "../db.js";
-import { embedText } from "../embed.js";
 import { bufferToEmbedding, cosineSimilarity } from "../similarity.js";
 import {
 	effectiveStrength,
@@ -44,7 +43,7 @@ export function createRecallMemoriesTool(
 		execute: async (_toolCallId, params) => {
 			const limit = params.limit ?? 10;
 			const now = new Date();
-			const queryEmbedding = await embedText(params.query, opts.embed);
+			const queryEmbedding = await opts.embed(params.query);
 
 			// Gather all active chunks (both facts and memories)
 			const facts = getActiveChunks(opts.stmts, opts.agentId, "fact");

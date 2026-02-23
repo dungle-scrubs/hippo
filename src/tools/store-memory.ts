@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { DbStatements } from "../db.js";
-import { contentHash, embedText } from "../embed.js";
+import { contentHash } from "../embed.js";
 import { embeddingToBuffer } from "../similarity.js";
 import type { Chunk, EmbedFn } from "../types.js";
 import { ulid } from "../ulid.js";
@@ -39,10 +39,8 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 			const now = new Date().toISOString();
 			const hash = await contentHash(params.content);
 
-			// Check for verbatim duplicate via unique index
-			const existing = opts.stmts.getActiveChunksByAgent
-				.all(opts.agentId, "memory")
-				.find((c) => (c as Chunk).content_hash === hash) as Chunk | undefined;
+			// Check for verbatim duplicate using the content_hash index
+			const existing = opts.stmts.getMemoryByHash.get(opts.agentId, hash) as Chunk | undefined;
 
 			if (existing) {
 				// Strengthen existing memory
@@ -65,7 +63,7 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 			}
 
 			// New memory — embed and insert
-			const embedding = await embedText(params.content, opts.embed);
+			const embedding = await opts.embed(params.content);
 
 			opts.stmts.insertChunk.run({
 				access_count: 0,

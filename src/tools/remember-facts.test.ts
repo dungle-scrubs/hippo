@@ -195,7 +195,12 @@ describe("remember_facts", () => {
 		const llm = mockLlm(
 			'[{"fact": "User dislikes Redux", "intensity": 0.85}, {"fact": "User tried café on Sukhumvit", "intensity": 0.15}]',
 		);
-		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		// Different embeddings so they're distinct from each other
+		let callCount = 0;
+		const embed: EmbedFn = vi.fn(async () => {
+			callCount++;
+			return callCount === 1 ? FIXED_EMBED : DIFFERENT_EMBED;
+		});
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
 			embed,
@@ -207,8 +212,105 @@ describe("remember_facts", () => {
 			text: "I NEVER want to use Redux again. Oh and I tried that café on Sukhumvit.",
 		});
 
-		// First fact inserts, second one will be auto-classified as DUPLICATE of first
-		// (same embedding) and reinforced — but let's just check we got 2 actions
 		expect(result.details.facts).toHaveLength(2);
+		// Both should be inserted as new (orthogonal embeddings)
+		expect(result.details.facts[0]?.action).toBe("inserted");
+		expect(result.details.facts[1]?.action).toBe("inserted");
+
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(2);
+	});
+
+	it("detects duplicate between facts extracted in the same batch", async () => {
+		// Both facts get the same embedding — the second should see the first
+		// and be auto-classified as DUPLICATE (similarity 1.0 > 0.93)
+		const llm = mockLlm(
+			'[{"fact": "User hates Redux", "intensity": 0.85}, {"fact": "User dislikes Redux", "intensity": 0.7}]',
+		);
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "I hate Redux. I dislike Redux." });
+
+		expect(result.details.facts).toHaveLength(2);
+		expect(result.details.facts[0]?.action).toBe("inserted");
+		// Second fact should be reinforced against the first (same embedding = sim 1.0)
+		expect(result.details.facts[1]?.action).toBe("reinforced");
+
+		// Only one chunk in DB — the second was deduplicated
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]?.encounter_count).toBe(2);
+	});
+
+	it("propagates LLM extraction errors", async () => {
+		const llm: LlmClient = {
+			complete: vi.fn().mockRejectedValue(new Error("API quota exceeded")),
+		};
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		await expect(tool.execute("tc1", { text: "test" })).rejects.toThrow("API quota exceeded");
+
+		// No chunks should have been inserted
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
+		expect(chunks).toHaveLength(0);
+	});
+
+	it("propagates embed errors — no partial inserts", async () => {
+		const llm = mockLlm('[{"fact": "User likes cats", "intensity": 0.5}]');
+		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding service down"));
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		await expect(tool.execute("tc1", { text: "I like cats" })).rejects.toThrow(
+			"Embedding service down",
+		);
+
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
+		expect(chunks).toHaveLength(0);
+	});
+
+	it("partial failure in multi-fact batch leaves first fact inserted", async () => {
+		// First fact embeds fine, second fails
+		let embedCallCount = 0;
+		const embed: EmbedFn = vi.fn(async () => {
+			embedCallCount++;
+			if (embedCallCount === 2) {
+				throw new Error("Transient embed failure");
+			}
+			return FIXED_EMBED;
+		});
+
+		const llm = mockLlm(
+			'[{"fact": "Fact one", "intensity": 0.5}, {"fact": "Fact two", "intensity": 0.5}]',
+		);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		// The tool should throw on the second fact
+		await expect(tool.execute("tc1", { text: "test" })).rejects.toThrow("Transient embed failure");
+
+		// First fact was already inserted before the error
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
+		expect(chunks).toHaveLength(1);
 	});
 });

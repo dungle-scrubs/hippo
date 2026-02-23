@@ -32,9 +32,22 @@ export interface RecallConversationToolOptions {
  * @param opts - Tool options
  * @returns AgentTool instance
  */
+/**
+ * Validate a SQL identifier to prevent injection via table name interpolation.
+ *
+ * @param name - Table name to validate
+ * @throws If the name contains unsafe characters
+ */
+function assertSafeIdentifier(name: string): void {
+	if (!/^[a-zA-Z_]\w*$/.test(name)) {
+		throw new Error(`Unsafe SQL identifier: "${name}"`);
+	}
+}
+
 export function createRecallConversationTool(
 	opts: RecallConversationToolOptions,
 ): AgentTool<typeof Params> {
+	assertSafeIdentifier(opts.messagesTable);
 	const ftsTable = `${opts.messagesTable}_fts`;
 
 	return {

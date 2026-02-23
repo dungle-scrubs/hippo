@@ -1,7 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import { type DbStatements, getActiveChunks } from "../db.js";
-import { embedText } from "../embed.js";
 import { bufferToEmbedding, cosineSimilarity } from "../similarity.js";
 import type { Chunk, EmbedFn } from "../types.js";
 
@@ -34,7 +33,7 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 		description:
 			"Forget specific memories or facts. Performs semantic match and hard deletes matching entries. No record of the forget request is stored.",
 		execute: async (_toolCallId, params) => {
-			const queryEmbedding = await embedText(params.description, opts.embed);
+			const queryEmbedding = await opts.embed(params.description);
 
 			const facts = getActiveChunks(opts.stmts, opts.agentId, "fact");
 			const memories = getActiveChunks(opts.stmts, opts.agentId, "memory");
@@ -58,8 +57,9 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 				return result;
 			}
 
-			// Hard delete
+			// Hard delete — also resurrect any chunks that were superseded by deleted ones
 			for (const { chunk } of matches) {
+				opts.stmts.clearSupersededBy.run(chunk.id);
 				opts.stmts.deleteChunk.run(chunk.id);
 			}
 

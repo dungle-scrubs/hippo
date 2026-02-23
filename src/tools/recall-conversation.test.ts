@@ -106,4 +106,16 @@ describe("recall_conversation", () => {
 		expect(firstText(result)).toContain("[assistant]");
 		expect(firstText(result)).toContain("2025-02-20");
 	});
+
+	it("rejects unsafe table names", () => {
+		expect(() =>
+			createRecallConversationTool({ db, messagesTable: "messages; DROP TABLE users" }),
+		).toThrow("Unsafe SQL identifier");
+	});
+
+	it("accepts valid table names", () => {
+		expect(() =>
+			createRecallConversationTool({ db, messagesTable: "chat_messages_v2" }),
+		).not.toThrow();
+	});
 });
