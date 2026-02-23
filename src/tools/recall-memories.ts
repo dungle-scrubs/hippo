@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import { type DbStatements, getActiveChunks } from "../db.js";
-import { bufferToEmbedding, cosineSimilarity } from "../similarity.js";
+import { type DbStatements, getAllActiveChunks } from "../db.js";
+import { chunkEmbedding, cosineSimilarity } from "../similarity.js";
 import {
 	effectiveStrength,
 	recencyScore,
@@ -45,16 +45,13 @@ export function createRecallMemoriesTool(
 			const now = new Date();
 			const queryEmbedding = await opts.embed(params.query);
 
-			// Gather all active chunks (both facts and memories)
-			const facts = getActiveChunks(opts.stmts, opts.agentId, "fact");
-			const memories = getActiveChunks(opts.stmts, opts.agentId, "memory");
-			const allChunks = [...facts, ...memories];
+			// Single query for all active chunks (facts + memories)
+			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId);
 
 			// Score and filter
 			const scored: SearchResult[] = [];
 			for (const chunk of allChunks) {
-				const chunkEmbedding = bufferToEmbedding(chunk.embedding as unknown as Buffer);
-				const similarity = cosineSimilarity(queryEmbedding, chunkEmbedding);
+				const similarity = cosineSimilarity(queryEmbedding, chunkEmbedding(chunk));
 
 				const hoursSince =
 					(now.getTime() - new Date(chunk.last_accessed_at).getTime()) / (1000 * 60 * 60);
@@ -76,14 +73,20 @@ export function createRecallMemoriesTool(
 			scored.sort((a, b) => b.score - a.score);
 			const topResults = scored.slice(0, limit);
 
-			// Apply retrieval boost to accessed chunks
+			// Apply retrieval boost to accessed chunks.
+			// Boost failures are non-fatal — search results are still valid.
 			for (const { chunk } of topResults) {
-				const boosted = retrievalBoost(chunk.running_intensity);
-				opts.stmts.touchChunk.run({
-					id: chunk.id,
-					last_accessed_at: now.toISOString(),
-					running_intensity: boosted,
-				});
+				try {
+					const boosted = retrievalBoost(chunk.running_intensity);
+					opts.stmts.touchChunk.run({
+						id: chunk.id,
+						last_accessed_at: now.toISOString(),
+						running_intensity: boosted,
+					});
+				} catch {
+					// Retrieval boost is best-effort — a failed boost should not
+					// discard valid search results.
+				}
 			}
 
 			// Format response

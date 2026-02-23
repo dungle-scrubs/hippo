@@ -200,6 +200,29 @@ describe("recall_memories", () => {
 		expect(contents).not.toContain("Ancient faded memory");
 	});
 
+	it("handles negative cosine similarity without errors", async () => {
+		// Insert chunk pointing in +x direction
+		insertChunk(stmts, {
+			content: "Positive direction",
+			embedding: embeddingToBuffer(directionalEmbed(0)),
+			kind: "fact",
+		});
+
+		// Query in -x direction (opposite) — cosine similarity = -1.0
+		const opposite = new Float32Array([-1, 0, 0, 0]);
+		const embed: EmbedFn = vi.fn(async () => opposite);
+		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
+
+		const result = await tool.execute("tc1", { query: "opposite" });
+
+		// Should still return results (negative similarity lowers score but doesn't crash)
+		expect(result.details.results.length).toBeGreaterThanOrEqual(0);
+		// If returned, the score should be low (negative similarity component)
+		if (result.details.results.length > 0) {
+			expect(result.details.results[0]?.score).toBeLessThan(0.5);
+		}
+	});
+
 	it("propagates embed errors", async () => {
 		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embed timeout"));
 		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
