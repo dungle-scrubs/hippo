@@ -86,8 +86,10 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 				running_intensity: 0.5,
 			});
 
+			const preview =
+				params.content.length > 80 ? `${params.content.slice(0, 80)}...` : params.content;
 			const result: AgentToolResult<{ action: "stored" }> = {
-				content: [{ text: `Stored memory: "${params.content.slice(0, 80)}..."`, type: "text" }],
+				content: [{ text: `Stored memory: "${preview}"`, type: "text" }],
 				details: { action: "stored" },
 			};
 			return result;

@@ -105,6 +105,26 @@ describe("store_memory", () => {
 		expect(after.encounter_count).toBe(2);
 	});
 
+	it("does not add ellipsis for short content", async () => {
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: mockEmbed, stmts });
+
+		const result = await tool.execute("tc1", { content: "Short note" });
+
+		const text = result.content[0];
+		expect(text?.type === "text" && text.text).toBe('Stored memory: "Short note"');
+	});
+
+	it("truncates long content with ellipsis", async () => {
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: mockEmbed, stmts });
+		const longContent = "x".repeat(200);
+
+		const result = await tool.execute("tc1", { content: longContent });
+
+		const text = result.content[0];
+		expect(text?.type === "text" && text.text).toContain("...");
+		expect(text?.type === "text" && text.text.length).toBeLessThan(200);
+	});
+
 	it("propagates embed errors — nothing stored", async () => {
 		const failEmbed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding API down"));
 		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: failEmbed, stmts });
