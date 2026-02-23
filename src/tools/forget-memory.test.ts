@@ -56,7 +56,7 @@ describe("forget_memory", () => {
 
 		// Query embedding matches target
 		const embed: EmbedFn = vi.fn(async () => target);
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		const result = await tool.execute("tc1", { description: "that I like Redux" });
 
@@ -74,7 +74,7 @@ describe("forget_memory", () => {
 
 		// Orthogonal embedding — no match
 		const embed: EmbedFn = vi.fn(async () => new Float32Array([0, 1, 0, 0]));
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		const result = await tool.execute("tc1", { description: "something unrelated" });
 
@@ -92,7 +92,7 @@ describe("forget_memory", () => {
 		insertChunk(stmts, "We used Redux for the project", "memory", target);
 
 		const embed: EmbedFn = vi.fn(async () => target);
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		const result = await tool.execute("tc1", { description: "Redux" });
 
@@ -106,7 +106,7 @@ describe("forget_memory", () => {
 		insertChunk(stmts, "User is from Germany", "fact", partial);
 
 		const embed: EmbedFn = vi.fn(async () => target);
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		const result = await tool.execute("tc1", { description: "Redux" });
 
@@ -124,7 +124,7 @@ describe("forget_memory", () => {
 		const id = insertChunk(stmts, "Sensitive data", "memory", target);
 
 		const embed: EmbedFn = vi.fn(async () => target);
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		await tool.execute("tc1", { description: "sensitive data" });
 
@@ -146,7 +146,7 @@ describe("forget_memory", () => {
 
 		// Forget B (the superseding fact)
 		const embed: EmbedFn = vi.fn(async () => target);
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 		await tool.execute("tc1", { description: "Bangkok" });
 
 		// B should be deleted
@@ -167,7 +167,7 @@ describe("forget_memory", () => {
 		stmts.supersedeChunk.run(idB, idA);
 
 		const embed: EmbedFn = vi.fn(async () => target);
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		// Forget with an embedding that matches both — only B is active
 		const result = await tool.execute("tc1", { description: "living location" });
@@ -185,7 +185,7 @@ describe("forget_memory", () => {
 		insertChunk(stmts, "Should survive", "fact", target);
 
 		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embed down"));
-		const tool = createForgetMemoryTool({ agentId: AGENT_ID, embed, stmts });
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
 
 		await expect(tool.execute("tc1", { description: "test" })).rejects.toThrow("Embed down");
 

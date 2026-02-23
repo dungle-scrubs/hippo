@@ -38,7 +38,7 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 		createRecallMemoryBlockTool(common),
 		createReplaceMemoryBlockTool(common),
 		createAppendMemoryBlockTool(common),
-		createForgetMemoryTool(withEmbed),
+		createForgetMemoryTool({ ...withEmbed, db: opts.db }),
 	];
 
 	if (opts.messagesTable) {
