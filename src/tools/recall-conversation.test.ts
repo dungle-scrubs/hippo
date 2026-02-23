@@ -107,6 +107,21 @@ describe("recall_conversation", () => {
 		expect(firstText(result)).toContain("2025-02-20");
 	});
 
+	it("re-throws non-SQLite errors instead of swallowing them", async () => {
+		// Create a db that will throw a non-SQLITE_ERROR
+		const badDb = new Database(":memory:");
+		badDb.exec(`
+			CREATE TABLE msgs (id INTEGER PRIMARY KEY, role TEXT, content TEXT, created_at TEXT);
+			CREATE VIRTUAL TABLE msgs_fts USING fts5(content, content=msgs, content_rowid=id);
+		`);
+		// Close the db to force an error that isn't SQLITE_ERROR
+		badDb.close();
+
+		const tool = createRecallConversationTool({ db: badDb, messagesTable: "msgs" });
+
+		await expect(tool.execute("tc1", { query: "test" })).rejects.toThrow();
+	});
+
 	it("rejects unsafe table names", () => {
 		expect(() =>
 			createRecallConversationTool({ db, messagesTable: "messages; DROP TABLE users" }),

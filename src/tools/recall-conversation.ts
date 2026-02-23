@@ -68,8 +68,17 @@ export function createRecallConversationTool(
 						LIMIT ?`,
 					)
 					.all(params.query, limit) as MessageSearchRow[];
-			} catch {
-				// FTS table may not exist or query may be malformed
+			} catch (err: unknown) {
+				// Only handle SQLite operational errors (missing table, bad FTS syntax).
+				// Re-throw unexpected errors (I/O, corruption, OOM).
+				const isSqliteError =
+					err instanceof Error &&
+					"code" in err &&
+					(err as Error & { code: string }).code === "SQLITE_ERROR";
+				if (!isSqliteError) {
+					throw err;
+				}
+
 				const result: AgentToolResult<{ error: string }> = {
 					content: [
 						{
