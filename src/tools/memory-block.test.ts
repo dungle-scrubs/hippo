@@ -141,6 +141,22 @@ describe("memory block tools", () => {
 			expect(row.value).toBe("A helpful assistant who likes dogs");
 		});
 
+		it("handles overlapping pattern in replaceAll", async () => {
+			stmts.upsertBlock.run({
+				agent_id: AGENT_ID,
+				key: "notes",
+				updated_at: new Date().toISOString(),
+				value: "aaa",
+			});
+
+			const tool = createReplaceMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			await tool.execute("tc1", { key: "notes", newText: "b", oldText: "aa" });
+
+			const row = stmts.getBlockByKey.get(AGENT_ID, "notes") as MemoryBlock;
+			// replaceAll("aa", "b") on "aaa" → "ba" (non-overlapping left-to-right)
+			expect(row.value).toBe("ba");
+		});
+
 		it("replaces all occurrences", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,

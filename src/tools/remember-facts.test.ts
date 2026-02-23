@@ -248,6 +248,35 @@ describe("remember_facts", () => {
 		expect(chunks[0]?.encounter_count).toBe(2);
 	});
 
+	it("uses LLM classification in ambiguous band and handles DISTINCT", async () => {
+		// Same setup as SUPERSEDES test — similarity in ambiguous band
+		const existingEmbed = new Float32Array([0.9, 0.4, 0.1, 0]);
+		insertFact(stmts, "User likes TypeScript", existingEmbed);
+
+		const llm = mockLlm('[{"fact": "User likes Rust", "intensity": 0.5}]', "DISTINCT");
+
+		const queryEmbed = new Float32Array([0.6, 0.7, 0.3, 0.1]);
+		const embed: EmbedFn = vi.fn(async () => queryEmbed);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "I like Rust too" });
+
+		expect(result.details.facts[0]?.action).toBe("inserted");
+		// 2 LLM calls: extraction + classification
+		expect(llm.complete).toHaveBeenCalledTimes(2);
+
+		// Both chunks exist — DISTINCT means both are valid simultaneously
+		const chunks = db
+			.prepare("SELECT * FROM chunks WHERE agent_id = ? AND superseded_by IS NULL")
+			.all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(2);
+	});
+
 	it("propagates LLM extraction errors", async () => {
 		const llm: LlmClient = {
 			complete: vi.fn().mockRejectedValue(new Error("API quota exceeded")),

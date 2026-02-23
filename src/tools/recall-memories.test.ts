@@ -170,6 +170,36 @@ describe("recall_memories", () => {
 		expect(kinds).toContain("memory");
 	});
 
+	it("excludes chunks below STRENGTH_FLOOR", async () => {
+		// Insert a chunk with very low intensity that has been idle for a long time
+		// so effective_strength drops below 0.05
+		const longAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+		insertChunk(stmts, {
+			content: "Ancient faded memory",
+			embedding: embeddingToBuffer(directionalEmbed(0)),
+			kind: "memory",
+			last_accessed_at: longAgo,
+			running_intensity: 0.05,
+		});
+
+		// Insert a healthy chunk
+		insertChunk(stmts, {
+			content: "Fresh memory",
+			embedding: embeddingToBuffer(directionalEmbed(0)),
+			kind: "memory",
+			running_intensity: 0.8,
+		});
+
+		const embed: EmbedFn = vi.fn(async () => directionalEmbed(0));
+		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
+
+		const result = await tool.execute("tc1", { query: "test" });
+
+		const contents = result.details.results.map((r: SearchResult) => r.chunk.content);
+		expect(contents).toContain("Fresh memory");
+		expect(contents).not.toContain("Ancient faded memory");
+	});
+
 	it("propagates embed errors", async () => {
 		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embed timeout"));
 		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });

@@ -1,8 +1,9 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { DbStatements } from "../db.js";
-import { contentHash } from "../embed.js";
+import { contentHash } from "../hash.js";
 import { embeddingToBuffer } from "../similarity.js";
+import { updatedIntensity } from "../strength.js";
 import type { Chunk, EmbedFn } from "../types.js";
 import { ulid } from "../ulid.js";
 
@@ -43,11 +44,16 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 			const existing = opts.stmts.getMemoryByHash.get(opts.agentId, hash) as Chunk | undefined;
 
 			if (existing) {
-				// Strengthen existing memory
+				// Strengthen existing memory — treat re-encounter at default intensity (0.5)
+				const newIntensity = updatedIntensity(
+					existing.running_intensity,
+					existing.encounter_count,
+					0.5,
+				);
 				opts.stmts.reinforceChunk.run({
 					id: existing.id,
 					last_accessed_at: now,
-					running_intensity: existing.running_intensity,
+					running_intensity: newIntensity,
 				});
 
 				const result: AgentToolResult<{ action: "strengthened" }> = {

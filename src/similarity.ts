@@ -39,11 +39,18 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 /**
  * Deserialize embedding BLOB from SQLite into Float32Array.
  *
+ * Copies through Uint8Array to guarantee 4-byte alignment.
+ * better-sqlite3 typically returns offset-0 Buffers, but the spec
+ * doesn't guarantee it and Float32Array requires aligned access.
+ *
  * @param buf - Buffer containing raw float32 bytes
  * @returns Float32Array embedding
  */
 export function bufferToEmbedding(buf: Buffer): Float32Array {
-	return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+	const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+	return new Float32Array(
+		bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+	);
 }
 
 /**

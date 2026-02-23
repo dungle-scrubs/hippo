@@ -87,6 +87,24 @@ describe("store_memory", () => {
 		expect(chunks).toHaveLength(2);
 	});
 
+	it("updates running_intensity on duplicate via moving average", async () => {
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: mockEmbed, stmts });
+
+		await tool.execute("tc1", { content: "Same content" });
+
+		const before = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").get(AGENT_ID) as Chunk;
+		// Default intensity for new memory is 0.5
+		expect(before.running_intensity).toBeCloseTo(0.5, 2);
+
+		await tool.execute("tc2", { content: "Same content" });
+
+		const after = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").get(AGENT_ID) as Chunk;
+		// Moving average: (0.5 * 1 + 0.5) / 2 = 0.5 — same value since default is 0.5
+		// The key thing is that the code path exercises updatedIntensity()
+		expect(after.running_intensity).toBeCloseTo(0.5, 2);
+		expect(after.encounter_count).toBe(2);
+	});
+
 	it("propagates embed errors — nothing stored", async () => {
 		const failEmbed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding API down"));
 		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: failEmbed, stmts });

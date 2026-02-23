@@ -59,6 +59,10 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 
 			const actions: RememberFactAction[] = [];
 
+			// No transaction wrapper — intentional. Each fact is independently meaningful,
+			// so partial insertion on mid-batch failure is acceptable. The alternative
+			// (all-or-nothing) would discard successfully processed facts on a transient
+			// embed/LLM error, which is worse for the user.
 			for (const { fact, intensity } of extracted) {
 				// Re-query each iteration so facts inserted/reinforced earlier
 				// in this batch are visible to subsequent conflict checks.
