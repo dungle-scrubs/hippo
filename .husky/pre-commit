@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+pnpm biome check --staged --no-errors-on-unmatched
+pnpm typecheck
