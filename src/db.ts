@@ -5,6 +5,7 @@ import type { Chunk } from "./types.js";
 export interface DbStatements {
 	readonly clearSupersededBy: Statement;
 	readonly deleteChunk: Statement;
+	readonly getAllActiveChunksByAgent: Statement;
 	readonly getActiveChunksByAgent: Statement;
 	readonly getBlockByKey: Statement;
 	readonly getMemoryByHash: Statement;
@@ -26,6 +27,12 @@ export function prepareStatements(db: Database): DbStatements {
 		clearSupersededBy: db.prepare("UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ?"),
 
 		deleteChunk: db.prepare("DELETE FROM chunks WHERE id = ?"),
+
+		getAllActiveChunksByAgent: db.prepare(`
+			SELECT * FROM chunks
+			WHERE agent_id = ? AND superseded_by IS NULL
+			ORDER BY last_accessed_at DESC
+		`),
 
 		getActiveChunksByAgent: db.prepare(`
 			SELECT * FROM chunks
@@ -88,4 +95,17 @@ export function getActiveChunks(
 	kind: "fact" | "memory",
 ): Chunk[] {
 	return stmts.getActiveChunksByAgent.all(agentId, kind) as Chunk[];
+}
+
+/**
+ * Get all active (non-superseded) chunks for an agent regardless of kind.
+ *
+ * Single query instead of two separate kind-filtered queries.
+ *
+ * @param stmts - Prepared statements
+ * @param agentId - Agent namespace
+ * @returns Array of chunks (facts and memories combined)
+ */
+export function getAllActiveChunks(stmts: DbStatements, agentId: string): Chunk[] {
+	return stmts.getAllActiveChunksByAgent.all(agentId) as Chunk[];
 }

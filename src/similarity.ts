@@ -56,9 +56,23 @@ export function bufferToEmbedding(buf: Buffer): Float32Array {
 /**
  * Serialize Float32Array to Buffer for SQLite BLOB storage.
  *
+ * Creates a copy so the returned Buffer is independent of the source array.
+ *
  * @param embedding - Float32Array embedding
  * @returns Buffer for BLOB column
  */
 export function embeddingToBuffer(embedding: Float32Array): Buffer {
-	return Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+	return Buffer.copyBytesFrom(embedding);
+}
+
+/**
+ * Extract and deserialize a chunk's embedding BLOB into Float32Array.
+ *
+ * Centralizes the Buffer cast from better-sqlite3's runtime type.
+ *
+ * @param chunk - A chunk row from SQLite
+ * @returns Float32Array embedding
+ */
+export function chunkEmbedding(chunk: { readonly embedding: Buffer }): Float32Array {
+	return bufferToEmbedding(chunk.embedding);
 }
