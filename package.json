@@ -1,8 +1,17 @@
 {
-	"name": "hippo",
+	"name": "@dungle-scrubs/hippo",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
+	"description": "Persistent memory for AI agents — facts, semantic search, conflict resolution, and decay. SQLite-backed, zero external services.",
+	"license": "MIT",
+	"author": "Kevin Frilot",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dungle-scrubs/hippo.git"
+	},
+	"files": [
+		"dist"
+	],
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",

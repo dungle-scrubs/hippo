@@ -20,7 +20,7 @@ embedding or LLM calls.
 ## Install
 
 ```bash
-pnpm add hippo
+pnpm add @dungle-scrubs/hippo
 ```
 
 Peer dependencies: `better-sqlite3`, `@mariozechner/pi-agent-core`,
@@ -30,7 +30,7 @@ Peer dependencies: `better-sqlite3`, `@mariozechner/pi-agent-core`,
 
 ```typescript
 import Database from "better-sqlite3";
-import { createHippoTools } from "hippo";
+import { createHippoTools } from "@dungle-scrubs/hippo";
 
 const db = new Database("agent.db");
 
@@ -69,7 +69,7 @@ import {
   createHippoTools,
   createEmbeddingProvider,
   createLlmProvider,
-} from "hippo";
+} from "@dungle-scrubs/hippo";
 
 const db = new Database("agent.db");
 
@@ -98,7 +98,7 @@ First call stores the model name. Subsequent calls throw if the
 model doesn't match — prevents mixing incompatible vector spaces.
 
 ```typescript
-import { initSchema, verifyEmbeddingModel } from "hippo";
+import { initSchema, verifyEmbeddingModel } from "@dungle-scrubs/hippo";
 
 initSchema(db);
 verifyEmbeddingModel(db, "text-embedding-3-small");
@@ -401,14 +401,14 @@ The library exports both the tool factory and all building blocks:
 
 ```typescript
 // Main API
-export { createHippoTools } from "hippo";
+export { createHippoTools } from "@dungle-scrubs/hippo";
 
 // Built-in providers
-export { createEmbeddingProvider } from "hippo";
-export { createLlmProvider } from "hippo";
+export { createEmbeddingProvider } from "@dungle-scrubs/hippo";
+export { createLlmProvider } from "@dungle-scrubs/hippo";
 
 // Schema utilities
-export { initSchema, verifyEmbeddingModel } from "hippo";
+export { initSchema, verifyEmbeddingModel } from "@dungle-scrubs/hippo";
 
 // Types
 export type {
@@ -416,7 +416,7 @@ export type {
   LlmClient, MemoryBlock, RememberFactAction,
   RememberFactsResult, SearchResult,
   EmbeddingProviderConfig, LlmProviderConfig,
-} from "hippo";
+} from "@dungle-scrubs/hippo";
 ```
 
 ## Development
