@@ -251,11 +251,12 @@ program
 	.option("--kind <type>", "Filter by kind: fact or memory")
 	.option("--superseded", "Include superseded chunks")
 	.option("--limit <n>", "Max results (default: 50)", "50")
+	.option("--offset <n>", "Skip first N results (default: 0)", "0")
 	.option("--json", "Output as JSON")
 	.action(
 		(
 			agent: string,
-			opts: { json?: boolean; kind?: string; limit: string; superseded?: boolean },
+			opts: { json?: boolean; kind?: string; limit: string; offset: string; superseded?: boolean },
 		) => {
 			const dbPath = resolveDbPath(program);
 			const db = openDb(dbPath);
@@ -270,8 +271,9 @@ program
 				sql += " AND kind = ?";
 				params.push(opts.kind);
 			}
-			sql += " ORDER BY last_accessed_at DESC LIMIT ?";
+			sql += " ORDER BY last_accessed_at DESC LIMIT ? OFFSET ?";
 			params.push(Number.parseInt(opts.limit, 10));
+			params.push(Number.parseInt(opts.offset, 10));
 
 			const rows = db.prepare(sql).all(...params) as ChunkRow[];
 			db.close();
@@ -391,9 +393,13 @@ program
 	.option("--agent <id>", "Filter to a specific agent")
 	.option("--kind <type>", "Filter by kind: fact or memory")
 	.option("--limit <n>", "Max results (default: 20)", "20")
+	.option("--offset <n>", "Skip first N results (default: 0)", "0")
 	.option("--json", "Output as JSON")
 	.action(
-		(text: string, opts: { agent?: string; json?: boolean; kind?: string; limit: string }) => {
+		(
+			text: string,
+			opts: { agent?: string; json?: boolean; kind?: string; limit: string; offset: string },
+		) => {
 			const dbPath = resolveDbPath(program);
 			const db = openDb(dbPath);
 
@@ -408,8 +414,9 @@ program
 				sql += " AND kind = ?";
 				params.push(opts.kind);
 			}
-			sql += " ORDER BY last_accessed_at DESC LIMIT ?";
+			sql += " ORDER BY last_accessed_at DESC LIMIT ? OFFSET ?";
 			params.push(Number.parseInt(opts.limit, 10));
+			params.push(Number.parseInt(opts.offset, 10));
 
 			const rows = db.prepare(sql).all(...params) as ChunkRow[];
 			db.close();
