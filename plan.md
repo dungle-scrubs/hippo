@@ -21,7 +21,7 @@ forgetting.
   similarity at query time
 - **LLM**: cheap model (Gemini Flash / Haiku) for extraction and
   classification, routed through marrow's existing `LlmClient`
-- **Runtime**: Bun
+- **Runtime**: Node (≥22)
 - **No**: MCP server, tool-proxy, PostgreSQL, Redis, cron jobs, background
   processes
 
@@ -421,9 +421,12 @@ Return: summary of what was learned
 ~/dev/hippo/
 ├── src/
 │   ├── index.ts                  # createHippoTools(opts) → AgentTool[]
+│   ├── types.ts                  # interfaces — Chunk, EmbedFn, LlmClient, etc.
 │   ├── schema.ts                 # table definitions, migrations, WAL/busy_timeout
-│   ├── embed.ts                  # embedding API calls
-│   ├── similarity.ts             # cosine similarity over Float32Array
+│   ├── db.ts                     # prepared statements, query helpers
+│   ├── hash.ts                   # SHA-256 content hashing for dedup
+│   ├── ulid.ts                   # ULID generator (timestamp + randomness)
+│   ├── similarity.ts             # cosine similarity, embedding serialization
 │   ├── strength.ts               # decay calculation, boost logic, scoring
 │   ├── extractor.ts              # LLM-based fact extraction + classification
 │   └── tools/
@@ -443,8 +446,9 @@ Return: summary of what was learned
 
 ```
 @mariozechner/pi-agent-core   — AgentTool type
-@mariozechner/pi-ai           — Type (TypeBox schemas)
-better-sqlite3                — storage (marrow is Node; shared driver across both surfaces)
+@mariozechner/pi-ai           — Type (TypeBox schemas), Message type
+@sinclair/typebox             — TypeBox schema runtime (peer of pi-ai)
+better-sqlite3                — storage (Node; shared driver with marrow)
 ```
 
 Embedding API and LLM calls use marrow's existing `LlmClient` interface,

@@ -58,6 +58,9 @@ export function createRecallConversationTool(
 
 			let rows: MessageSearchRow[];
 			try {
+				// Prepared per-call intentionally: the FTS table may not exist when the
+				// tool is created (marrow creates it). better-sqlite3 caches prepared
+				// statements internally by SQL text, so runtime overhead is negligible.
 				rows = opts.db
 					.prepare(
 						`SELECT m.role, m.content, m.created_at
