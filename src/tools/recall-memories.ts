@@ -17,6 +17,23 @@ const DEFAULT_MAX_SEARCH_CHUNKS = 10_000;
 /** Default minimum cosine similarity to include a result. */
 const DEFAULT_MIN_SIMILARITY = 0.1;
 
+/** SQLite error codes that are transient (busy/locked) and safe to swallow. */
+const TRANSIENT_SQLITE_CODES = new Set(["SQLITE_BUSY", "SQLITE_LOCKED"]);
+
+/**
+ * Check if an error is a transient SQLite error (busy/locked).
+ *
+ * @param err - Unknown error value
+ * @returns True if this is a transient SQLite error safe to ignore
+ */
+function isSqliteTransient(err: unknown): boolean {
+	return (
+		err instanceof Error &&
+		"code" in err &&
+		TRANSIENT_SQLITE_CODES.has((err as Error & { code: string }).code)
+	);
+}
+
 const Params = Type.Object({
 	limit: Type.Optional(
 		Type.Number({ description: "Max results to return (default: 10)", minimum: 1 }),
@@ -92,6 +109,7 @@ export function createRecallMemoriesTool(
 
 			// Apply retrieval boost to accessed chunks.
 			// Boost failures are non-fatal — search results are still valid.
+			// Only swallow SQLite busy/locked errors; re-throw corruption/OOM.
 			for (const { chunk } of topResults) {
 				try {
 					const boosted = retrievalBoost(chunk.running_intensity);
@@ -100,9 +118,11 @@ export function createRecallMemoriesTool(
 						last_accessed_at: now.toISOString(),
 						running_intensity: boosted,
 					});
-				} catch {
-					// Retrieval boost is best-effort — a failed boost should not
-					// discard valid search results.
+				} catch (err: unknown) {
+					if (isSqliteTransient(err)) {
+						continue;
+					}
+					throw err;
 				}
 			}
 

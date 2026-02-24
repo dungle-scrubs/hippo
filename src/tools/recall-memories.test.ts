@@ -296,4 +296,49 @@ describe("recall_memories", () => {
 
 		await expect(tool.execute("tc1", { query: "test" })).rejects.toThrow("Embed timeout");
 	});
+
+	it("swallows SQLITE_BUSY during retrieval boost", async () => {
+		insertChunk(stmts, {
+			content: "Busy-safe memory",
+			embedding: embeddingToBuffer(directionalEmbed(0)),
+			kind: "memory",
+			running_intensity: 0.5,
+		});
+
+		const embed: EmbedFn = vi.fn(async () => directionalEmbed(0));
+		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
+
+		// Sabotage touchChunk to throw SQLITE_BUSY
+		let callCount = 0;
+		vi.spyOn(stmts.touchChunk, "run").mockImplementation(() => {
+			callCount++;
+			const err = new Error("database is locked");
+			(err as Error & { code: string }).code = "SQLITE_BUSY";
+			throw err;
+		});
+
+		// Should still return results despite boost failure
+		const result = await tool.execute("tc1", { query: "test" });
+		expect(result.details.results.length).toBeGreaterThan(0);
+		expect(callCount).toBe(1);
+	});
+
+	it("re-throws non-transient errors during retrieval boost", async () => {
+		insertChunk(stmts, {
+			content: "Corrupt memory",
+			embedding: embeddingToBuffer(directionalEmbed(0)),
+			kind: "memory",
+			running_intensity: 0.5,
+		});
+
+		const embed: EmbedFn = vi.fn(async () => directionalEmbed(0));
+		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
+
+		// Sabotage touchChunk to throw a non-transient error (corruption/OOM)
+		vi.spyOn(stmts.touchChunk, "run").mockImplementation(() => {
+			throw new Error("disk I/O error");
+		});
+
+		await expect(tool.execute("tc1", { query: "test" })).rejects.toThrow("disk I/O error");
+	});
 });
