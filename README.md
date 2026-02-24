@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Hippo" width="200" height="200">
+</p>
+
 # Hippo
 
 Persistent memory for AI agents. Give your agent the ability to
