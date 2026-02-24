@@ -33,6 +33,11 @@ export interface ForgetMemoryToolOptions {
  * @returns AgentTool instance
  */
 export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool<typeof Params> {
+	// Wrap deletes in a transaction for atomicity. clearSupersededBy resurrects
+	// any chunk whose superseded_by points at a deleted chunk. This handles
+	// single-hop chains correctly (A superseded by B → forget B → A active).
+	// Multi-hop chains (A→B→C) work because superseded_by is always single-hop:
+	// only the directly superseded chunk references the superseder.
 	const deleteMatches = opts.db.transaction((matches: Array<{ chunk: Chunk }>) => {
 		for (const { chunk } of matches) {
 			opts.stmts.clearSupersededBy.run(chunk.id);
@@ -43,8 +48,8 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 	return {
 		description:
 			"Forget specific memories or facts. Performs semantic match and hard deletes matching entries. No record of the forget request is stored.",
-		execute: async (_toolCallId, params) => {
-			const queryEmbedding = await opts.embed(params.description);
+		execute: async (_toolCallId, params, signal) => {
+			const queryEmbedding = await opts.embed(params.description, signal);
 
 			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId);
 

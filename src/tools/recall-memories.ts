@@ -11,6 +11,9 @@ import {
 } from "../strength.js";
 import type { EmbedFn, SearchResult } from "../types.js";
 
+/** Default maximum chunks to load for brute-force semantic search. */
+const DEFAULT_MAX_SEARCH_CHUNKS = 10_000;
+
 const Params = Type.Object({
 	limit: Type.Optional(
 		Type.Number({ description: "Max results to return (default: 10)", minimum: 1 }),
@@ -22,6 +25,8 @@ const Params = Type.Object({
 export interface RecallMemoriesToolOptions {
 	readonly agentId: string;
 	readonly embed: EmbedFn;
+	/** Max chunks to load for brute-force search (default: 10,000). */
+	readonly maxSearchChunks?: number;
 	readonly stmts: DbStatements;
 }
 
@@ -40,13 +45,15 @@ export function createRecallMemoriesTool(
 	return {
 		description:
 			"Semantic search over stored facts and memories. Returns results ranked by relevance, strength, and recency.",
-		execute: async (_toolCallId, params) => {
+		execute: async (_toolCallId, params, signal) => {
 			const limit = params.limit ?? 10;
+			const maxChunks = opts.maxSearchChunks ?? DEFAULT_MAX_SEARCH_CHUNKS;
 			const now = new Date();
-			const queryEmbedding = await opts.embed(params.query);
+			const queryEmbedding = await opts.embed(params.query, signal);
 
-			// Single query for all active chunks (facts + memories)
-			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId);
+			// Single query for all active chunks (facts + memories),
+			// capped to avoid loading unbounded data into memory.
+			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId, maxChunks);
 
 			// Score and filter
 			const scored: SearchResult[] = [];

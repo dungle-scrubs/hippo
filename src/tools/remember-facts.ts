@@ -63,10 +63,12 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 			// so partial insertion on mid-batch failure is acceptable. The alternative
 			// (all-or-nothing) would discard successfully processed facts on a transient
 			// embed/LLM error, which is worse for the user.
+			//
+			// Load facts once — processFact maintains this array across iterations
+			// for intra-batch visibility (e.g., dedup between extracted facts).
+			const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact");
+
 			for (const { fact, intensity } of extracted) {
-				// Re-query each iteration so facts inserted/reinforced earlier
-				// in this batch are visible to subsequent conflict checks.
-				const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact");
 				const action = await processFact(fact, intensity, existingFacts, opts, signal);
 				actions.push(action);
 			}
@@ -103,9 +105,12 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 /**
  * Process a single extracted fact through the conflict resolution pipeline.
  *
+ * Mutates `existingFacts` to reflect inserts, reinforcements, and supersessions
+ * so subsequent facts in the same batch see up-to-date state without re-querying.
+ *
  * @param fact - Extracted fact text
  * @param intensity - Rated intensity [0, 1]
- * @param existingFacts - All active fact chunks for this agent
+ * @param existingFacts - Mutable array of active fact chunks (updated in place)
  * @param opts - Tool options
  * @param signal - Optional abort signal
  * @returns Action taken for this fact
@@ -113,12 +118,13 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 async function processFact(
 	fact: string,
 	intensity: number,
-	existingFacts: readonly Chunk[],
+	existingFacts: Chunk[],
 	opts: RememberFactsToolOptions,
 	signal?: AbortSignal,
 ): Promise<RememberFactAction> {
 	const now = new Date().toISOString();
-	const embedding = await opts.embed(fact);
+	const embedding = await opts.embed(fact, signal);
+	const embeddingBuf = embeddingToBuffer(embedding);
 
 	// Find top candidates by similarity
 	const candidates = findTopCandidates(embedding, existingFacts, TOP_K_CANDIDATES);
@@ -127,20 +133,23 @@ async function processFact(
 	const best = candidates[0];
 	if (!best || best.similarity < AMBIGUOUS_THRESHOLD) {
 		// NEW — no similar existing fact
-		opts.stmts.insertChunk.run({
+		const chunk: Chunk = {
 			access_count: 0,
 			agent_id: opts.agentId,
 			content: fact,
 			content_hash: null,
 			created_at: now,
-			embedding: embeddingToBuffer(embedding),
+			embedding: embeddingBuf,
 			encounter_count: 1,
 			id: ulid(),
 			kind: "fact",
 			last_accessed_at: now,
 			metadata: null,
 			running_intensity: intensity,
-		});
+			superseded_by: null,
+		};
+		opts.stmts.insertChunk.run(chunk);
+		existingFacts.push(chunk);
 
 		return { action: "inserted", content: fact, intensity };
 	}
@@ -167,6 +176,18 @@ async function processFact(
 				running_intensity: newIntensity,
 			});
 
+			// Update in-memory entry so subsequent facts see current values
+			const idx = existingFacts.indexOf(best.chunk);
+			if (idx !== -1) {
+				existingFacts[idx] = {
+					...best.chunk,
+					access_count: best.chunk.access_count + 1,
+					encounter_count: best.chunk.encounter_count + 1,
+					last_accessed_at: now,
+					running_intensity: newIntensity,
+				};
+			}
+
 			return {
 				action: "reinforced",
 				content: best.chunk.content,
@@ -178,20 +199,28 @@ async function processFact(
 		case "SUPERSEDES": {
 			const newId = ulid();
 			opts.stmts.supersedeChunk.run(newId, best.chunk.id);
-			opts.stmts.insertChunk.run({
+
+			// Remove superseded chunk from in-memory array
+			const idx = existingFacts.indexOf(best.chunk);
+			if (idx !== -1) existingFacts.splice(idx, 1);
+
+			const chunk: Chunk = {
 				access_count: 0,
 				agent_id: opts.agentId,
 				content: fact,
 				content_hash: null,
 				created_at: now,
-				embedding: embeddingToBuffer(embedding),
+				embedding: embeddingBuf,
 				encounter_count: 1,
 				id: newId,
 				kind: "fact",
 				last_accessed_at: now,
 				metadata: null,
 				running_intensity: intensity,
-			});
+				superseded_by: null,
+			};
+			opts.stmts.insertChunk.run(chunk);
+			existingFacts.push(chunk);
 
 			return {
 				action: "superseded",
@@ -201,20 +230,23 @@ async function processFact(
 		}
 
 		case "DISTINCT": {
-			opts.stmts.insertChunk.run({
+			const chunk: Chunk = {
 				access_count: 0,
 				agent_id: opts.agentId,
 				content: fact,
 				content_hash: null,
 				created_at: now,
-				embedding: embeddingToBuffer(embedding),
+				embedding: embeddingBuf,
 				encounter_count: 1,
 				id: ulid(),
 				kind: "fact",
 				last_accessed_at: now,
 				metadata: null,
 				running_intensity: intensity,
-			});
+				superseded_by: null,
+			};
+			opts.stmts.insertChunk.run(chunk);
+			existingFacts.push(chunk);
 
 			return { action: "inserted", content: fact, intensity };
 		}

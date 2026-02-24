@@ -36,9 +36,17 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 	return {
 		description:
 			"Store a raw memory (document chunk, experience, decision). Deduplicates by content hash — identical content strengthens the existing memory.",
-		execute: async (_toolCallId, params) => {
+		execute: async (_toolCallId, params, signal) => {
+			if (params.metadata !== undefined) {
+				try {
+					JSON.parse(params.metadata);
+				} catch {
+					throw new Error(`Invalid JSON in metadata parameter: ${params.metadata.slice(0, 100)}`);
+				}
+			}
+
 			const now = new Date().toISOString();
-			const hash = await contentHash(params.content);
+			const hash = contentHash(params.content);
 
 			// Check for verbatim duplicate using the content_hash index
 			const existing = opts.stmts.getMemoryByHash.get(opts.agentId, hash) as Chunk | undefined;
@@ -69,7 +77,7 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 			}
 
 			// New memory — embed and insert
-			const embedding = await opts.embed(params.content);
+			const embedding = await opts.embed(params.content, signal);
 
 			opts.stmts.insertChunk.run({
 				access_count: 0,

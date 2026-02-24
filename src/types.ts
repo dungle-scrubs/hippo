@@ -20,7 +20,7 @@ export interface LlmClient {
 }
 
 /** Embedding function injected by the consumer. */
-export type EmbedFn = (text: string) => Promise<Float32Array>;
+export type EmbedFn = (text: string, signal?: AbortSignal) => Promise<Float32Array>;
 
 /** Chunk kind discriminator. */
 export type ChunkKind = "fact" | "memory";

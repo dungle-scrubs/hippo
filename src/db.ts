@@ -32,12 +32,14 @@ export function prepareStatements(db: Database): DbStatements {
 			SELECT * FROM chunks
 			WHERE agent_id = ? AND superseded_by IS NULL
 			ORDER BY last_accessed_at DESC
+			LIMIT ?
 		`),
 
 		getActiveChunksByAgent: db.prepare(`
 			SELECT * FROM chunks
 			WHERE agent_id = ? AND kind = ? AND superseded_by IS NULL
 			ORDER BY last_accessed_at DESC
+			LIMIT ?
 		`),
 
 		getBlockByKey: db.prepare("SELECT * FROM memory_blocks WHERE agent_id = ? AND key = ?"),
@@ -87,14 +89,16 @@ export function prepareStatements(db: Database): DbStatements {
  * @param stmts - Prepared statements
  * @param agentId - Agent namespace
  * @param kind - Chunk kind ('fact' or 'memory')
+ * @param limit - Max rows to return (-1 for unlimited, default -1)
  * @returns Array of chunks
  */
 export function getActiveChunks(
 	stmts: DbStatements,
 	agentId: string,
 	kind: "fact" | "memory",
+	limit = -1,
 ): Chunk[] {
-	return stmts.getActiveChunksByAgent.all(agentId, kind) as Chunk[];
+	return stmts.getActiveChunksByAgent.all(agentId, kind, limit) as Chunk[];
 }
 
 /**
@@ -104,8 +108,9 @@ export function getActiveChunks(
  *
  * @param stmts - Prepared statements
  * @param agentId - Agent namespace
+ * @param limit - Max rows to return (-1 for unlimited, default -1)
  * @returns Array of chunks (facts and memories combined)
  */
-export function getAllActiveChunks(stmts: DbStatements, agentId: string): Chunk[] {
-	return stmts.getAllActiveChunksByAgent.all(agentId) as Chunk[];
+export function getAllActiveChunks(stmts: DbStatements, agentId: string, limit = -1): Chunk[] {
+	return stmts.getAllActiveChunksByAgent.all(agentId, limit) as Chunk[];
 }
