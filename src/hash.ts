@@ -1,14 +1,14 @@
+import { createHash } from "node:crypto";
+
 /**
  * Compute SHA-256 hash of content for dedup.
+ *
+ * Synchronous — matches the sync SQLite layer. Uses node:crypto
+ * instead of the async Web Crypto API.
  *
  * @param content - Text to hash
  * @returns Hex-encoded SHA-256 hash
  */
-export async function contentHash(content: string): Promise<string> {
-	const encoded = new TextEncoder().encode(content);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-	const hashArray = new Uint8Array(hashBuffer);
-	return Array.from(hashArray)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
+export function contentHash(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
 }
