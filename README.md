@@ -17,9 +17,10 @@ on command — backed by SQLite, with no external services.
 | **CLI** | `hippo` binary for inspection and management | Database admin, debugging, backup/restore |
 
 All three share the same SQLite storage, strength model, and
-conflict resolution. The library and MCP server provide all 8
-memory tools. The CLI provides read/write database access without
-embedding or LLM calls.
+conflict resolution. The library provides all 8 memory tools; the
+MCP server exposes 7 (all except `recall_conversation`, which
+requires a client-managed messages table). The CLI provides
+read/write database access without embedding or LLM calls.
 
 ## Install
 
