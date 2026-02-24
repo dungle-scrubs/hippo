@@ -125,6 +125,39 @@ describe("store_memory", () => {
 		expect(text?.type === "text" && text.text.length).toBeLessThan(200);
 	});
 
+	it("isolates dedup by agent_id", async () => {
+		const tool1 = createStoreMemoryTool({ agentId: "agent-1", embed: mockEmbed, stmts });
+		const tool2 = createStoreMemoryTool({ agentId: "agent-2", embed: mockEmbed, stmts });
+
+		await tool1.execute("tc1", { content: "Shared content" });
+		const result = await tool2.execute("tc2", { content: "Shared content" });
+
+		// Second agent should get its own chunk, not strengthen the first
+		expect(result.details.action).toBe("stored");
+
+		const chunks = db.prepare("SELECT * FROM chunks").all() as Chunk[];
+		expect(chunks).toHaveLength(2);
+	});
+
+	it("rejects invalid JSON metadata", async () => {
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: mockEmbed, stmts });
+
+		await expect(tool.execute("tc1", { content: "test", metadata: "not json {" })).rejects.toThrow(
+			"Invalid JSON",
+		);
+	});
+
+	it("accepts valid JSON metadata", async () => {
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: mockEmbed, stmts });
+
+		const result = await tool.execute("tc1", {
+			content: "test",
+			metadata: '{"source": "pdf"}',
+		});
+
+		expect(result.details.action).toBe("stored");
+	});
+
 	it("propagates embed errors — nothing stored", async () => {
 		const failEmbed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding API down"));
 		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed: failEmbed, stmts });

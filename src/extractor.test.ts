@@ -31,12 +31,20 @@ describe("extractFacts", () => {
 		expect(facts[0]?.fact).toBe("User dislikes Redux");
 	});
 
-	it("clamps intensity to [0, 1]", async () => {
+	it("clamps intensity above 1.0 to 1.0", async () => {
 		const llm = mockLlm('[{"fact": "test", "intensity": 1.5}]');
 
 		const facts = await extractFacts("test", llm);
 
 		expect(facts[0]?.intensity).toBe(1.0);
+	});
+
+	it("clamps intensity below 0.0 to 0.0", async () => {
+		const llm = mockLlm('[{"fact": "test", "intensity": -0.3}]');
+
+		const facts = await extractFacts("test", llm);
+
+		expect(facts[0]?.intensity).toBe(0.0);
 	});
 
 	it("returns empty array for unparseable response", async () => {

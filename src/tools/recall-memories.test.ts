@@ -223,6 +223,30 @@ describe("recall_memories", () => {
 		}
 	});
 
+	it("respects maxSearchChunks cap", async () => {
+		// Insert 5 chunks, but cap search to 3
+		for (let i = 0; i < 5; i++) {
+			insertChunk(stmts, {
+				content: `Memory ${i}`,
+				embedding: embeddingToBuffer(directionalEmbed(0)),
+				kind: "memory",
+			});
+		}
+
+		const embed: EmbedFn = vi.fn(async () => directionalEmbed(0));
+		const tool = createRecallMemoriesTool({
+			agentId: AGENT_ID,
+			embed,
+			maxSearchChunks: 3,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { query: "test" });
+
+		// Only 3 chunks were loaded, so at most 3 results
+		expect(result.details.results.length).toBeLessThanOrEqual(3);
+	});
+
 	it("propagates embed errors", async () => {
 		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embed timeout"));
 		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });

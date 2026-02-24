@@ -76,6 +76,21 @@ describe("memory block tools", () => {
 			expect(row.value).toBe("First line");
 		});
 
+		it("updates updated_at timestamp on append", async () => {
+			stmts.upsertBlock.run({
+				agent_id: AGENT_ID,
+				key: "objectives",
+				updated_at: "2020-01-01T00:00:00.000Z",
+				value: "Initial",
+			});
+
+			const tool = createAppendMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			await tool.execute("tc1", { content: "Appended", key: "objectives" });
+
+			const row = stmts.getBlockByKey.get(AGENT_ID, "objectives") as MemoryBlock;
+			expect(row.updated_at > "2020-01-01T00:00:00.000Z").toBe(true);
+		});
+
 		it("appends to existing block with newline separator", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
