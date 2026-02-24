@@ -24,6 +24,20 @@ export interface StoreMemoryToolOptions {
 }
 
 /**
+ * Check if an error is a SQLite UNIQUE constraint violation.
+ *
+ * @param err - Unknown error value
+ * @returns True if this is a UNIQUE constraint error
+ */
+function isSqliteConstraintUnique(err: unknown): boolean {
+	return (
+		err instanceof Error &&
+		"code" in err &&
+		(err as Error & { code: string }).code === "SQLITE_CONSTRAINT_UNIQUE"
+	);
+}
+
+/**
  * Create the store_memory tool.
  *
  * Embeds content, deduplicates by content hash, and inserts or strengthens.
@@ -79,20 +93,51 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 			// New memory — embed and insert
 			const embedding = await opts.embed(params.content, signal);
 
-			opts.stmts.insertChunk.run({
-				access_count: 0,
-				agent_id: opts.agentId,
-				content: params.content,
-				content_hash: hash,
-				created_at: now,
-				embedding: embeddingToBuffer(embedding),
-				encounter_count: 1,
-				id: ulid(),
-				kind: "memory",
-				last_accessed_at: now,
-				metadata: params.metadata ?? null,
-				running_intensity: 0.5,
-			});
+			try {
+				opts.stmts.insertChunk.run({
+					access_count: 0,
+					agent_id: opts.agentId,
+					content: params.content,
+					content_hash: hash,
+					created_at: now,
+					embedding: embeddingToBuffer(embedding),
+					encounter_count: 1,
+					id: ulid(),
+					kind: "memory",
+					last_accessed_at: now,
+					metadata: params.metadata ?? null,
+					running_intensity: 0.5,
+				});
+			} catch (err: unknown) {
+				// TOCTOU: another call inserted the same content between our hash check
+				// and this insert (the await embed() yields the event loop). Fall back to strengthen.
+				if (isSqliteConstraintUnique(err)) {
+					const race = opts.stmts.getMemoryByHash.get(opts.agentId, hash) as Chunk | undefined;
+					if (race) {
+						const newIntensity = updatedIntensity(
+							race.running_intensity,
+							race.encounter_count,
+							0.5,
+						);
+						opts.stmts.reinforceChunk.run({
+							id: race.id,
+							last_accessed_at: now,
+							running_intensity: newIntensity,
+						});
+						const result: AgentToolResult<{ action: "strengthened" }> = {
+							content: [
+								{
+									text: `Memory already exists (strengthened, encounters: ${race.encounter_count + 1})`,
+									type: "text",
+								},
+							],
+							details: { action: "strengthened" },
+						};
+						return result;
+					}
+				}
+				throw err;
+			}
 
 			const preview =
 				params.content.length > 80 ? `${params.content.slice(0, 80)}...` : params.content;

@@ -169,4 +169,39 @@ describe("store_memory", () => {
 		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
 		expect(chunks).toHaveLength(0);
 	});
+
+	it("handles concurrent stores of same content via constraint fallback", async () => {
+		const resolvers: Array<(v: Float32Array) => void> = [];
+		const embed: EmbedFn = vi.fn(
+			() =>
+				new Promise<Float32Array>((resolve) => {
+					resolvers.push(resolve);
+				}),
+		);
+
+		const tool = createStoreMemoryTool({ agentId: AGENT_ID, embed, stmts });
+
+		// Start both calls — both check hash (find nothing) then await embed
+		const p1 = tool.execute("tc1", { content: "Race content" });
+		const p2 = tool.execute("tc2", { content: "Race content" });
+
+		// Both embed calls are pending
+		expect(resolvers).toHaveLength(2);
+
+		// Resolve first — its insert succeeds
+		// biome-ignore lint/style/noNonNullAssertion: test setup guarantees two resolvers
+		resolvers[0]!(new Float32Array([0.1, 0.2, 0.3]));
+		const r1 = await p1;
+		expect(r1.details.action).toBe("stored");
+
+		// Resolve second — hits UNIQUE constraint, falls back to strengthen
+		// biome-ignore lint/style/noNonNullAssertion: test setup guarantees two resolvers
+		resolvers[1]!(new Float32Array([0.1, 0.2, 0.3]));
+		const r2 = await p2;
+		expect(r2.details.action).toBe("strengthened");
+
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]?.encounter_count).toBe(2);
+	});
 });
