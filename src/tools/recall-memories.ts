@@ -1,6 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import { type DbStatements, getAllActiveChunks } from "../db.js";
+import { type DbStatements, getActiveChunks, getAllActiveChunks } from "../db.js";
 import { chunkEmbedding, cosineSimilarity } from "../similarity.js";
 import {
 	effectiveStrength,
@@ -9,7 +9,7 @@ import {
 	STRENGTH_FLOOR,
 	searchScore,
 } from "../strength.js";
-import type { EmbedFn, SearchResult } from "../types.js";
+import type { ChunkKind, EmbedFn, SearchResult } from "../types.js";
 
 /** Default maximum chunks to load for brute-force semantic search. */
 const DEFAULT_MAX_SEARCH_CHUNKS = 10_000;
@@ -35,6 +35,11 @@ function isSqliteTransient(err: unknown): boolean {
 }
 
 const Params = Type.Object({
+	kind: Type.Optional(
+		Type.Union([Type.Literal("fact"), Type.Literal("memory")], {
+			description: "Filter by chunk kind (default: all)",
+		}),
+	),
 	limit: Type.Optional(
 		Type.Number({ description: "Max results to return (default: 10)", minimum: 1 }),
 	),
@@ -69,14 +74,17 @@ export function createRecallMemoriesTool(
 			"Semantic search over stored facts and memories. Returns results ranked by relevance, strength, and recency.",
 		execute: async (_toolCallId, params, signal) => {
 			const limit = params.limit ?? 10;
+			const kind = params.kind as ChunkKind | undefined;
 			const maxChunks = opts.maxSearchChunks ?? DEFAULT_MAX_SEARCH_CHUNKS;
 			const minSim = opts.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
 			const now = new Date();
 			const queryEmbedding = await opts.embed(params.query, signal);
 
-			// Single query for all active chunks (facts + memories),
-			// capped to avoid loading unbounded data into memory.
-			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId, maxChunks);
+			// Load active chunks, optionally filtered by kind.
+			// Capped to avoid loading unbounded data into memory.
+			const allChunks = kind
+				? getActiveChunks(opts.stmts, opts.agentId, kind, maxChunks)
+				: getAllActiveChunks(opts.stmts, opts.agentId, maxChunks);
 
 			// Score and filter
 			const scored: SearchResult[] = [];
