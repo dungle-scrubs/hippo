@@ -1,6 +1,6 @@
 {
 	"name": "@dungle-scrubs/hippo",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"type": "module",
 	"description": "Persistent memory for AI agents — facts, semantic search, conflict resolution, and decay. SQLite-backed, zero external services.",
 	"license": "MIT",
