@@ -133,4 +133,14 @@ describe("recall_conversation", () => {
 			createRecallConversationTool({ db, messagesTable: "chat_messages_v2" }),
 		).not.toThrow();
 	});
+
+	it("returns query_error for bad FTS syntax instead of fts_unavailable", async () => {
+		const tool = createRecallConversationTool({ db, messagesTable: "messages" });
+
+		// Column filter on non-existent column triggers SQLITE_ERROR
+		// with a message that does NOT contain "no such table"
+		const result = await tool.execute("tc1", { query: "nonexistent_col:test" });
+
+		expect(result.details.error).toBe("query_error");
+	});
 });

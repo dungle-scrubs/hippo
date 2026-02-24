@@ -82,14 +82,19 @@ export function createRecallConversationTool(
 					throw err;
 				}
 
+				const msg = (err as Error).message?.toLowerCase() ?? "";
+				const isTableMissing = msg.includes("no such table") || msg.includes("no such module");
+
 				const result: AgentToolResult<{ error: string }> = {
 					content: [
 						{
-							text: "Conversation search unavailable (FTS index may not exist).",
+							text: isTableMissing
+								? "Conversation search unavailable (FTS index may not exist)."
+								: `Search query error: ${(err as Error).message}`,
 							type: "text",
 						},
 					],
-					details: { error: "fts_unavailable" },
+					details: { error: isTableMissing ? "fts_unavailable" : "query_error" },
 				};
 				return result;
 			}
