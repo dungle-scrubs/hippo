@@ -22,8 +22,12 @@ forgetting.
 - **LLM**: cheap model (Gemini Flash / Haiku) for extraction and
   classification, routed through marrow's existing `LlmClient`
 - **Runtime**: Node (≥22)
-- **No**: MCP server, tool-proxy, PostgreSQL, Redis, cron jobs, background
-  processes
+- **MCP server** (planned): HTTP/SSE transport for non-Marrow consumers,
+  embedding and LLM configured in hippo (not passed by caller), agent_id
+  as a per-call parameter. STDIO transport as secondary option.
+- **CLI**: database inspection and management (`hippo --db <path> <cmd>`),
+  no semantic operations (no embeddings/LLM)
+- **No**: tool-proxy, PostgreSQL, Redis, cron jobs, background processes
 
 ### SQLite configuration
 
@@ -349,6 +353,74 @@ Chunks where `effective_strength < 0.05` are excluded from results (forgotten
 by decay, not by explicit request).
 
 Chunks with `superseded_by IS NOT NULL` are excluded from results.
+
+### Planned: Hybrid BM25 + vector retrieval with RRF fusion
+
+The current search is vector-only (cosine similarity). The `chunks` table
+already stores `content` as text — adding FTS5 for BM25 keyword search is
+straightforward and gets hybrid retrieval without schema changes.
+
+Inspired by QMD's architecture (`github.com/tobi/qmd`), which combines
+BM25, vector search, and LLM re-ranking with Reciprocal Rank Fusion.
+
+#### What to add
+
+1. **FTS5 virtual table** over `chunks.content`:
+
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    content,
+    content=chunks,
+    content_rowid=rowid,
+    tokenize='porter unicode61'
+);
+```
+
+With triggers on INSERT/DELETE/UPDATE to keep it in sync, same pattern
+as the existing `messages_fts` setup.
+
+2. **BM25 retrieval path** in `recall_memories`: run the query text
+through FTS5 `MATCH` to get keyword-ranked results in parallel with
+the existing embedding cosine search.
+
+3. **Reciprocal Rank Fusion (RRF)** to merge the two ranked lists:
+
+```
+rrf_score = 1/(k + rank_bm25) + 1/(k + rank_vector)
+```
+
+Where `k=60` (standard constant that prevents top-ranked items from
+dominating). The fused score replaces raw `cosine_similarity` as the
+relevance component in the scoring formula.
+
+4. **Strength and recency weighting** applied after fusion — the
+existing `effective_strength` and `recency_score` components are
+unchanged.
+
+#### Why this matters
+
+- **Exact keyword matches** that vector search misses (e.g., searching
+  for "Redux" when the embedding model considers it semantically close
+  to "state management" but doesn't surface the exact mention)
+- **Conceptual matches** that BM25 misses (e.g., "UI wireframe" finding
+  "ASCII mockup") — already covered by vector search
+- **RRF is proven** — combining two independent ranking signals almost
+  always outperforms either signal alone, and RRF is the standard
+  fusion method (no learned weights to tune)
+
+#### What NOT to add (yet)
+
+- **Query expansion** — QMD uses a fine-tuned LLM to generate query
+  variations. Adds latency and a model dependency. Defer until basic
+  hybrid search is evaluated.
+- **LLM re-ranking** — a second pass that scores each candidate for
+  relevance. Powerful but adds an LLM call to every search. Defer
+  unless hybrid retrieval alone isn't sufficient.
+- **Local embedding models** — QMD runs everything locally via
+  node-llama-cpp. Hippo uses API-based embeddings. Local models are
+  appealing (no network, no cost) but add ~2GB of model downloads and
+  node-llama-cpp as a native dependency. Evaluate after the MCP server
+  stabilizes.
 
 ---
 

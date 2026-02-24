@@ -53,7 +53,11 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 	return tools;
 }
 
-export { initSchema } from "./schema.js";
+export type { EmbeddingProviderConfig } from "./providers/embedding.js";
+export { createEmbeddingProvider } from "./providers/embedding.js";
+export type { LlmProviderConfig } from "./providers/llm.js";
+export { createLlmProvider } from "./providers/llm.js";
+export { initSchema, verifyEmbeddingModel } from "./schema.js";
 // Re-export types for consumers
 export type {
 	Chunk,
