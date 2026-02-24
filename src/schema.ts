@@ -36,6 +36,9 @@ CREATE INDEX IF NOT EXISTS idx_chunks_last_accessed
 
 CREATE INDEX IF NOT EXISTS idx_chunks_superseded
     ON chunks(superseded_by) WHERE superseded_by IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_chunks_created_at
+    ON chunks(agent_id, created_at);
 `;
 
 /**

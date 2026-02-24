@@ -79,6 +79,7 @@ describe("initSchema", () => {
 		expect(indexNames).toContain("idx_chunks_agent_kind");
 		expect(indexNames).toContain("idx_chunks_last_accessed");
 		expect(indexNames).toContain("idx_chunks_superseded");
+		expect(indexNames).toContain("idx_chunks_created_at");
 	});
 
 	it("enforces kind CHECK constraint", () => {
