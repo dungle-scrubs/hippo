@@ -10,6 +10,9 @@
 		}
 	},
 	"types": "./dist/index.d.ts",
+	"bin": {
+		"hippo": "./dist/cli.js"
+	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
 		"check": "biome check .",
@@ -22,7 +25,8 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@sinclair/typebox": "^0.34.48"
+		"@sinclair/typebox": "^0.34.48",
+		"commander": "^14.0.3"
 	},
 	"peerDependencies": {
 		"@mariozechner/pi-agent-core": ">=0.52.0",
