@@ -27,8 +27,19 @@ embedding or LLM calls.
 pnpm add @dungle-scrubs/hippo
 ```
 
-Peer dependencies: `better-sqlite3`, `@mariozechner/pi-agent-core`,
-`@mariozechner/pi-ai`.
+### Dependencies by usage mode
+
+| Dependency | Library | MCP server | CLI |
+|------------|---------|------------|-----|
+| `better-sqlite3` | Required | Required | Required |
+| `@mariozechner/pi-agent-core` | Required | — | — |
+| `@mariozechner/pi-ai` | Required | — | — |
+
+**Library mode** returns `AgentTool` instances from pi-agent-core,
+so both pi packages are peer dependencies. **MCP server** and
+**CLI** are standalone — they have no pi dependency. If you're
+only using hippo as an MCP server or CLI tool, you only need
+`better-sqlite3`.
 
 ## Quick start — Library
 
