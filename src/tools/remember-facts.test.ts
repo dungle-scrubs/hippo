@@ -73,6 +73,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -94,6 +95,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -114,6 +116,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -138,6 +141,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -166,6 +170,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => queryEmbed);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -203,6 +208,7 @@ describe("remember_facts", () => {
 		});
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -230,6 +236,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -259,6 +266,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => queryEmbed);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -288,6 +296,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => queryEmbed);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -328,6 +337,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -354,6 +364,7 @@ describe("remember_facts", () => {
 		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -378,6 +389,7 @@ describe("remember_facts", () => {
 		// Cap to 0 — no existing facts loaded for comparison
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			maxSearchFacts: 0,
@@ -393,11 +405,36 @@ describe("remember_facts", () => {
 		expect(chunks).toHaveLength(4); // 3 existing + 1 new
 	});
 
+	it("filters out empty/whitespace facts from extraction", async () => {
+		const llm = mockLlm(
+			'[{"fact": "  ", "intensity": 0.5}, {"fact": "Valid fact", "intensity": 0.6}]',
+		);
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			llm,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "test" });
+
+		// Only the valid fact should be processed
+		expect(result.details.facts).toHaveLength(1);
+		expect(result.details.facts[0]?.action).toBe("inserted");
+
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]?.content).toBe("Valid fact");
+	});
+
 	it("propagates embed errors — no partial inserts", async () => {
 		const llm = mockLlm('[{"fact": "User likes cats", "intensity": 0.5}]');
 		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding service down"));
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -427,6 +464,7 @@ describe("remember_facts", () => {
 		);
 		const tool = createRememberFactsTool({
 			agentId: AGENT_ID,
+			db,
 			embed,
 			llm,
 			stmts,
@@ -438,5 +476,80 @@ describe("remember_facts", () => {
 		// First fact was already inserted before the error
 		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
 		expect(chunks).toHaveLength(1);
+	});
+
+	it("SUPERSEDES is atomic — insert failure leaves old fact active", async () => {
+		// Set up an existing fact in the ambiguous band
+		const existingEmbed = new Float32Array([0.9, 0.4, 0.1, 0]);
+		const oldId = insertFact(stmts, "User lives in Berlin", existingEmbed);
+
+		const llm = mockLlm('[{"fact": "User lives in Bangkok", "intensity": 0.5}]', "SUPERSEDES");
+		const queryEmbed = new Float32Array([0.6, 0.7, 0.3, 0.1]);
+		const embed: EmbedFn = vi.fn(async () => queryEmbed);
+
+		// Sabotage insertChunk to fail after supersede would have run
+		const originalRun = stmts.insertChunk.run.bind(stmts.insertChunk);
+		let insertCallCount = 0;
+		vi.spyOn(stmts.insertChunk, "run").mockImplementation((...args: unknown[]) => {
+			insertCallCount++;
+			// The fact already exists (from insertFact), so the second insert
+			// (inside processFact) is the one we want to fail
+			if (insertCallCount > 0) {
+				// Simulate that the original run still exists, but we throw manually
+				// for the new chunk insertion during SUPERSEDES
+				throw new Error("disk full");
+			}
+			return originalRun(...args);
+		});
+
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			llm,
+			stmts,
+		});
+
+		await expect(tool.execute("tc1", { text: "I moved to Bangkok" })).rejects.toThrow("disk full");
+
+		// Old fact should still be active — superseded_by should NOT be set
+		// because the transaction rolled back
+		const old = db.prepare("SELECT * FROM chunks WHERE id = ?").get(oldId) as Chunk;
+		expect(old.superseded_by).toBeNull();
+	});
+
+	it("rejects text exceeding maxTextLength", async () => {
+		const llm = mockLlm("[]");
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			llm,
+			maxTextLength: 100,
+			stmts,
+		});
+
+		const longText = "x".repeat(101);
+		await expect(tool.execute("tc1", { text: longText })).rejects.toThrow("Input text too long");
+
+		// LLM should not have been called
+		expect(llm.complete).not.toHaveBeenCalled();
+	});
+
+	it("allows text within maxTextLength", async () => {
+		const llm = mockLlm("[]");
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			llm,
+			maxTextLength: 100,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "x".repeat(100) });
+		expect(result.details.facts).toHaveLength(0);
 	});
 });

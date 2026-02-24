@@ -63,10 +63,13 @@ export async function extractFacts(
 		return [];
 	}
 
-	return parsed.filter(isValidExtractedFact).map((f) => ({
-		fact: f.fact.trim(),
-		intensity: Math.max(0, Math.min(1, f.intensity)),
-	}));
+	return parsed
+		.filter(isValidExtractedFact)
+		.map((f) => ({
+			fact: f.fact.trim(),
+			intensity: Math.max(0, Math.min(1, f.intensity)),
+		}))
+		.filter((f) => f.fact.length > 0);
 }
 
 /**
@@ -90,13 +93,13 @@ export async function classifyConflict(
 
 	const response = await llm.complete([userMessage(prompt)], CLASSIFICATION_SYSTEM_PROMPT, signal);
 
-	const classification = response.trim().toUpperCase();
-	if (
-		classification === "DUPLICATE" ||
-		classification === "SUPERSEDES" ||
-		classification === "DISTINCT"
-	) {
-		return classification;
+	const firstWord = response
+		.trim()
+		.split(/\s/)[0]
+		?.replace(/[^A-Za-z]/g, "")
+		.toUpperCase();
+	if (firstWord === "DUPLICATE" || firstWord === "SUPERSEDES" || firstWord === "DISTINCT") {
+		return firstWord;
 	}
 
 	// Default to DISTINCT if LLM returns garbage

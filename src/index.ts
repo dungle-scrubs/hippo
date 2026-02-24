@@ -32,7 +32,7 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 
 	// biome-ignore lint/suspicious/noExplicitAny: AgentTool generics don't unify across different parameter schemas
 	const tools: AgentTool<any>[] = [
-		createRememberFactsTool({ ...withEmbed, llm: opts.llm }),
+		createRememberFactsTool({ ...withEmbed, db: opts.db, llm: opts.llm }),
 		createStoreMemoryTool(withEmbed),
 		createRecallMemoriesTool(withEmbed),
 		createRecallMemoryBlockTool(common),
@@ -55,4 +55,14 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 
 export { initSchema } from "./schema.js";
 // Re-export types for consumers
-export type { ChunkKind, EmbedFn, HippoOptions, LlmClient } from "./types.js";
+export type {
+	Chunk,
+	ChunkKind,
+	EmbedFn,
+	HippoOptions,
+	LlmClient,
+	MemoryBlock,
+	RememberFactAction,
+	RememberFactsResult,
+	SearchResult,
+} from "./types.js";

@@ -24,7 +24,9 @@ export interface DbStatements {
  */
 export function prepareStatements(db: Database): DbStatements {
 	return {
-		clearSupersededBy: db.prepare("UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ?"),
+		clearSupersededBy: db.prepare(
+			"UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ? AND agent_id = ?",
+		),
 
 		deleteChunk: db.prepare("DELETE FROM chunks WHERE id = ?"),
 

@@ -94,6 +94,25 @@ describe("extractFacts", () => {
 			controller.signal,
 		);
 	});
+
+	it("filters out empty/whitespace-only facts after trim", async () => {
+		const llm = mockLlm(
+			'[{"fact": "  ", "intensity": 0.5}, {"fact": "", "intensity": 0.3}, {"fact": "valid fact", "intensity": 0.6}]',
+		);
+
+		const facts = await extractFacts("test", llm);
+
+		expect(facts).toHaveLength(1);
+		expect(facts[0]?.fact).toBe("valid fact");
+	});
+
+	it("returns empty array for object-wrapped JSON (not a raw array)", async () => {
+		const llm = mockLlm('{"facts": [{"fact": "test", "intensity": 0.5}]}');
+
+		const facts = await extractFacts("test", llm);
+
+		expect(facts).toEqual([]);
+	});
 });
 
 describe("classifyConflict", () => {
@@ -127,6 +146,18 @@ describe("classifyConflict", () => {
 		expect(result).toBe("DISTINCT");
 	});
 
+	it("extracts classification when LLM adds trailing explanation", async () => {
+		const llm = mockLlm("SUPERSEDES\n\nThe user's city has changed from Berlin to Bangkok.");
+		const result = await classifyConflict("User lives in Bangkok", "User lives in Berlin", llm);
+		expect(result).toBe("SUPERSEDES");
+	});
+
+	it("extracts classification when LLM adds inline explanation", async () => {
+		const llm = mockLlm("DUPLICATE — same information, just reworded");
+		const result = await classifyConflict("User likes TS", "User enjoys TypeScript", llm);
+		expect(result).toBe("DUPLICATE");
+	});
+
 	it("passes abort signal to LLM", async () => {
 		const llm = mockLlm("DISTINCT");
 		const controller = new AbortController();
@@ -138,5 +169,35 @@ describe("classifyConflict", () => {
 			expect.anything(),
 			controller.signal,
 		);
+	});
+
+	it("strips markdown bold formatting from classification", async () => {
+		const llm = mockLlm("**DUPLICATE**");
+		const result = await classifyConflict("a", "b", llm);
+		expect(result).toBe("DUPLICATE");
+	});
+
+	it("strips backtick formatting from classification", async () => {
+		const llm = mockLlm("`SUPERSEDES`");
+		const result = await classifyConflict("a", "b", llm);
+		expect(result).toBe("SUPERSEDES");
+	});
+
+	it("strips quotes from classification", async () => {
+		const llm = mockLlm('"DUPLICATE"');
+		const result = await classifyConflict("a", "b", llm);
+		expect(result).toBe("DUPLICATE");
+	});
+
+	it("defaults to DISTINCT for empty response", async () => {
+		const llm = mockLlm("");
+		const result = await classifyConflict("a", "b", llm);
+		expect(result).toBe("DISTINCT");
+	});
+
+	it("defaults to DISTINCT for whitespace-only response", async () => {
+		const llm = mockLlm("   \n\t  ");
+		const result = await classifyConflict("a", "b", llm);
+		expect(result).toBe("DISTINCT");
 	});
 });

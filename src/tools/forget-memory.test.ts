@@ -180,6 +180,36 @@ describe("forget_memory", () => {
 		expect(rowA.superseded_by).toBeNull();
 	});
 
+	it("respects maxSearchChunks cap", async () => {
+		const target = new Float32Array([1, 0, 0, 0]);
+
+		// Insert 5 matching chunks
+		for (let i = 0; i < 5; i++) {
+			insertChunk(stmts, `Matching fact ${i}`, "fact", target);
+		}
+
+		const embed: EmbedFn = vi.fn(async () => target);
+
+		// Cap to 2 — only 2 chunks loaded, so at most 2 deleted
+		const tool = createForgetMemoryTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			maxSearchChunks: 2,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { description: "matching facts" });
+
+		expect(result.details.deleted).toBe(2);
+
+		// 3 chunks should remain (5 inserted - 2 deleted)
+		const remaining = db
+			.prepare("SELECT * FROM chunks WHERE agent_id = ?")
+			.all(AGENT_ID) as Chunk[];
+		expect(remaining).toHaveLength(3);
+	});
+
 	it("propagates embed errors — nothing deleted", async () => {
 		const target = new Float32Array([1, 0, 0, 0]);
 		insertChunk(stmts, "Should survive", "fact", target);
@@ -192,5 +222,107 @@ describe("forget_memory", () => {
 		// Chunk should still exist — nothing was deleted
 		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID);
 		expect(chunks).toHaveLength(1);
+	});
+
+	it("respects custom forgetThreshold", async () => {
+		const target = new Float32Array([1, 0, 0, 0]);
+		// Partial match — similarity ~0.8 with target
+		const partial = new Float32Array([0.8, 0.6, 0, 0]);
+		insertChunk(stmts, "Partial match fact", "fact", partial);
+
+		const embed: EmbedFn = vi.fn(async () => target);
+
+		// With strict threshold (0.9) — similarity ~0.8 is below, nothing deleted
+		const strict = createForgetMemoryTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			forgetThreshold: 0.9,
+			stmts,
+		});
+		const r1 = await strict.execute("tc1", { description: "test" });
+		expect(r1.details.deleted).toBe(0);
+
+		// With lenient threshold (0.5) — similarity ~0.8 passes, chunk deleted
+		const lenient = createForgetMemoryTool({
+			agentId: AGENT_ID,
+			db,
+			embed,
+			forgetThreshold: 0.5,
+			stmts,
+		});
+		const r2 = await lenient.execute("tc2", { description: "test" });
+		expect(r2.details.deleted).toBe(1);
+	});
+
+	it("clearSupersededBy is scoped to agent — does not affect other agents", async () => {
+		const target = new Float32Array([1, 0, 0, 0]);
+
+		// Agent A: create a supersession chain (factA1 superseded by factA2)
+		const factA1 = ulid();
+		const factA2 = ulid();
+		const now = new Date().toISOString();
+		stmts.insertChunk.run({
+			access_count: 0,
+			agent_id: AGENT_ID,
+			content: "Agent A old fact",
+			content_hash: null,
+			created_at: now,
+			embedding: embeddingToBuffer(target),
+			encounter_count: 1,
+			id: factA1,
+			kind: "fact",
+			last_accessed_at: now,
+			metadata: null,
+			running_intensity: 0.5,
+		});
+		stmts.insertChunk.run({
+			access_count: 0,
+			agent_id: AGENT_ID,
+			content: "Agent A new fact",
+			content_hash: null,
+			created_at: now,
+			embedding: embeddingToBuffer(target),
+			encounter_count: 1,
+			id: factA2,
+			kind: "fact",
+			last_accessed_at: now,
+			metadata: null,
+			running_intensity: 0.5,
+		});
+		stmts.supersedeChunk.run(factA2, factA1);
+
+		// Agent B: create a chunk with superseded_by pointing to factA2 (simulated corruption)
+		const OTHER_AGENT = "other-agent";
+		const factB1 = ulid();
+		stmts.insertChunk.run({
+			access_count: 0,
+			agent_id: OTHER_AGENT,
+			content: "Agent B fact",
+			content_hash: null,
+			created_at: now,
+			embedding: embeddingToBuffer(target),
+			encounter_count: 1,
+			id: factB1,
+			kind: "fact",
+			last_accessed_at: now,
+			metadata: null,
+			running_intensity: 0.5,
+		});
+		// Simulate cross-agent supersession reference (data corruption scenario)
+		db.prepare("UPDATE chunks SET superseded_by = ? WHERE id = ?").run(factA2, factB1);
+
+		// Agent A forgets factA2 — should resurrect factA1 but NOT affect Agent B's factB1
+		const embed: EmbedFn = vi.fn(async () => target);
+		const tool = createForgetMemoryTool({ agentId: AGENT_ID, db, embed, stmts });
+		await tool.execute("tc1", { description: "new fact" });
+
+		// factA1 should be resurrected (same agent)
+		const a1 = db.prepare("SELECT * FROM chunks WHERE id = ?").get(factA1) as Chunk;
+		expect(a1.superseded_by).toBeNull();
+
+		// factB1 should NOT be resurrected (different agent, clearSupersededBy is scoped)
+		const b1 = db.prepare("SELECT * FROM chunks WHERE id = ?").get(factB1) as Chunk;
+		expect(b1.superseded_by).toBe(factA2);
 	});
 });

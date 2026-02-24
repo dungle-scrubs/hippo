@@ -5,8 +5,11 @@ import { type DbStatements, getAllActiveChunks } from "../db.js";
 import { chunkEmbedding, cosineSimilarity } from "../similarity.js";
 import type { Chunk, EmbedFn } from "../types.js";
 
-/** Minimum similarity threshold for a chunk to be considered a match for deletion. */
-const FORGET_THRESHOLD = 0.7;
+/** Default minimum similarity threshold for a chunk to be considered a match for deletion. */
+const DEFAULT_FORGET_THRESHOLD = 0.7;
+
+/** Default maximum chunks to load for brute-force semantic search. */
+const DEFAULT_MAX_SEARCH_CHUNKS = 10_000;
 
 const Params = Type.Object({
 	description: Type.String({
@@ -19,6 +22,10 @@ export interface ForgetMemoryToolOptions {
 	readonly agentId: string;
 	readonly db: Database;
 	readonly embed: EmbedFn;
+	/** Minimum cosine similarity to consider a match for deletion (default: 0.7). */
+	readonly forgetThreshold?: number;
+	/** Max chunks to load for brute-force search (default: 10,000). */
+	readonly maxSearchChunks?: number;
 	readonly stmts: DbStatements;
 }
 
@@ -40,7 +47,7 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 	// only the directly superseded chunk references the superseder.
 	const deleteMatches = opts.db.transaction((matches: Array<{ chunk: Chunk }>) => {
 		for (const { chunk } of matches) {
-			opts.stmts.clearSupersededBy.run(chunk.id);
+			opts.stmts.clearSupersededBy.run(chunk.id, opts.agentId);
 			opts.stmts.deleteChunk.run(chunk.id);
 		}
 	});
@@ -51,13 +58,15 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 		execute: async (_toolCallId, params, signal) => {
 			const queryEmbedding = await opts.embed(params.description, signal);
 
-			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId);
+			const maxChunks = opts.maxSearchChunks ?? DEFAULT_MAX_SEARCH_CHUNKS;
+			const threshold = opts.forgetThreshold ?? DEFAULT_FORGET_THRESHOLD;
+			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId, maxChunks);
 
 			// Find matching chunks above threshold
 			const matches: Array<{ chunk: Chunk; similarity: number }> = [];
 			for (const chunk of allChunks) {
 				const similarity = cosineSimilarity(queryEmbedding, chunkEmbedding(chunk));
-				if (similarity >= FORGET_THRESHOLD) {
+				if (similarity >= threshold) {
 					matches.push({ chunk, similarity });
 				}
 			}

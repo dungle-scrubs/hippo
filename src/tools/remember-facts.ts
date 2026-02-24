@@ -1,5 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
+import type { Database } from "better-sqlite3";
 import { type DbStatements, getActiveChunks } from "../db.js";
 import { classifyConflict, extractFacts } from "../extractor.js";
 import { chunkEmbedding, cosineSimilarity, embeddingToBuffer } from "../similarity.js";
@@ -23,6 +24,9 @@ const TOP_K_CANDIDATES = 5;
 /** Default max existing facts to load for conflict resolution. */
 const DEFAULT_MAX_SEARCH_FACTS = 10_000;
 
+/** Maximum input text length in characters (default 10KB). */
+const MAX_TEXT_LENGTH = 10_000;
+
 const Params = Type.Object({
 	text: Type.String({
 		description: "Text containing facts to extract and remember",
@@ -32,10 +36,13 @@ const Params = Type.Object({
 /** Options for creating the remember_facts tool. */
 export interface RememberFactsToolOptions {
 	readonly agentId: string;
+	readonly db: Database;
 	readonly embed: EmbedFn;
 	readonly llm: LlmClient;
 	/** Max existing facts to load for conflict resolution (default: 10,000). */
 	readonly maxSearchFacts?: number;
+	/** Max input text length in characters (default: 10,000). */
+	readonly maxTextLength?: number;
 	readonly stmts: DbStatements;
 }
 
@@ -52,6 +59,13 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 		description:
 			"Extract discrete facts from text, rate their intensity, check for conflicts with existing knowledge, and store. Handles duplicates, supersession, and new facts.",
 		execute: async (_toolCallId, params, signal) => {
+			const maxLen = opts.maxTextLength ?? MAX_TEXT_LENGTH;
+			if (params.text.length > maxLen) {
+				throw new Error(
+					`Input text too long (${params.text.length} chars, max ${maxLen}). Summarize or chunk the text first.`,
+				);
+			}
+
 			const extracted = await extractFacts(params.text, opts.llm, signal);
 
 			if (extracted.length === 0) {
@@ -204,12 +218,6 @@ async function processFact(
 
 		case "SUPERSEDES": {
 			const newId = ulid();
-			opts.stmts.supersedeChunk.run(newId, best.chunk.id);
-
-			// Remove superseded chunk from in-memory array
-			const idx = existingFacts.indexOf(best.chunk);
-			if (idx !== -1) existingFacts.splice(idx, 1);
-
 			const chunk: Chunk = {
 				access_count: 0,
 				agent_id: opts.agentId,
@@ -225,7 +233,17 @@ async function processFact(
 				running_intensity: intensity,
 				superseded_by: null,
 			};
-			opts.stmts.insertChunk.run(chunk);
+
+			// Atomic: insert replacement then mark old as superseded.
+			// If either fails, neither commits — no dangling superseded_by refs.
+			opts.db.transaction(() => {
+				opts.stmts.insertChunk.run(chunk);
+				opts.stmts.supersedeChunk.run(newId, best.chunk.id);
+			})();
+
+			// Update in-memory array after successful commit
+			const idx = existingFacts.indexOf(best.chunk);
+			if (idx !== -1) existingFacts.splice(idx, 1);
 			existingFacts.push(chunk);
 
 			return {
