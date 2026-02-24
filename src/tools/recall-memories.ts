@@ -14,6 +14,9 @@ import type { EmbedFn, SearchResult } from "../types.js";
 /** Default maximum chunks to load for brute-force semantic search. */
 const DEFAULT_MAX_SEARCH_CHUNKS = 10_000;
 
+/** Default minimum cosine similarity to include a result. */
+const DEFAULT_MIN_SIMILARITY = 0.1;
+
 const Params = Type.Object({
 	limit: Type.Optional(
 		Type.Number({ description: "Max results to return (default: 10)", minimum: 1 }),
@@ -27,6 +30,8 @@ export interface RecallMemoriesToolOptions {
 	readonly embed: EmbedFn;
 	/** Max chunks to load for brute-force search (default: 10,000). */
 	readonly maxSearchChunks?: number;
+	/** Minimum cosine similarity to include in results (default: 0.1). */
+	readonly minSimilarity?: number;
 	readonly stmts: DbStatements;
 }
 
@@ -48,6 +53,7 @@ export function createRecallMemoriesTool(
 		execute: async (_toolCallId, params, signal) => {
 			const limit = params.limit ?? 10;
 			const maxChunks = opts.maxSearchChunks ?? DEFAULT_MAX_SEARCH_CHUNKS;
+			const minSim = opts.minSimilarity ?? DEFAULT_MIN_SIMILARITY;
 			const now = new Date();
 			const queryEmbedding = await opts.embed(params.query, signal);
 
@@ -59,6 +65,10 @@ export function createRecallMemoriesTool(
 			const scored: SearchResult[] = [];
 			for (const chunk of allChunks) {
 				const similarity = cosineSimilarity(queryEmbedding, chunkEmbedding(chunk));
+
+				if (similarity < minSim) {
+					continue;
+				}
 
 				const hoursSince =
 					(now.getTime() - new Date(chunk.last_accessed_at).getTime()) / (1000 * 60 * 60);

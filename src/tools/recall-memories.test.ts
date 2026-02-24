@@ -200,7 +200,7 @@ describe("recall_memories", () => {
 		expect(contents).not.toContain("Ancient faded memory");
 	});
 
-	it("handles negative cosine similarity without errors", async () => {
+	it("excludes anti-correlated chunks below similarity floor", async () => {
 		// Insert chunk pointing in +x direction
 		insertChunk(stmts, {
 			content: "Positive direction",
@@ -208,19 +208,62 @@ describe("recall_memories", () => {
 			kind: "fact",
 		});
 
-		// Query in -x direction (opposite) — cosine similarity = -1.0
+		// Query in -x direction (opposite) — cosine similarity = -1.0, below floor
 		const opposite = new Float32Array([-1, 0, 0, 0]);
 		const embed: EmbedFn = vi.fn(async () => opposite);
 		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
 
 		const result = await tool.execute("tc1", { query: "opposite" });
 
-		// Should still return results (negative similarity lowers score but doesn't crash)
-		expect(result.details.results.length).toBeGreaterThanOrEqual(0);
-		// If returned, the score should be low (negative similarity component)
-		if (result.details.results.length > 0) {
-			expect(result.details.results[0]?.score).toBeLessThan(0.5);
-		}
+		expect(result.details.results).toHaveLength(0);
+	});
+
+	it("excludes orthogonal chunks below similarity floor", async () => {
+		// Insert chunk in dim 0, query dim 1 — cosine similarity = 0.0, below floor
+		insertChunk(stmts, {
+			content: "Orthogonal memory",
+			embedding: embeddingToBuffer(directionalEmbed(0)),
+			kind: "fact",
+		});
+
+		const embed: EmbedFn = vi.fn(async () => directionalEmbed(1));
+		const tool = createRecallMemoriesTool({ agentId: AGENT_ID, embed, stmts });
+
+		const result = await tool.execute("tc1", { query: "unrelated" });
+
+		expect(result.details.results).toHaveLength(0);
+	});
+
+	it("respects custom minSimilarity", async () => {
+		// Chunk in a partially-aligned direction — similarity ~0.8 with dim 0
+		const partial = new Float32Array([0.8, 0.6, 0, 0]);
+		insertChunk(stmts, {
+			content: "Partial match",
+			embedding: embeddingToBuffer(partial),
+			kind: "fact",
+		});
+
+		const embed: EmbedFn = vi.fn(async () => directionalEmbed(0));
+
+		// Strict threshold (0.9) — similarity ~0.8 is below it
+		const strict = createRecallMemoriesTool({
+			agentId: AGENT_ID,
+			embed,
+			minSimilarity: 0.9,
+			stmts,
+		});
+		const r1 = await strict.execute("tc1", { query: "test" });
+		expect(r1.details.results).toHaveLength(0);
+
+		// Lenient threshold (0.5) — similarity ~0.8 passes
+		const lenient = createRecallMemoriesTool({
+			agentId: AGENT_ID,
+			embed,
+			minSimilarity: 0.5,
+			stmts,
+		});
+		const r2 = await lenient.execute("tc2", { query: "test" });
+		expect(r2.details.results).toHaveLength(1);
 	});
 
 	it("respects maxSearchChunks cap", async () => {
