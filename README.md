@@ -4,9 +4,18 @@ Persistent memory for AI agents. Give your agent the ability to
 learn facts, store experiences, recall semantically, and forget
 on command — backed by SQLite, with no external services.
 
-Hippo is a TypeScript library that produces `AgentTool` instances.
-You inject a database handle, an embedding function, and an LLM
-client; it hands back tools your agent can call during conversation.
+## Three ways to use it
+
+| Mode | What | When |
+|------|------|------|
+| **Library** | `createHippoTools(opts)` returns `AgentTool[]` | You're building on marrow / pi-agent-core |
+| **MCP server** | `hippo-server` binary, HTTP/SSE or STDIO | Any MCP-compatible client (Claude, Cursor, etc.) |
+| **CLI** | `hippo` binary for inspection and management | Database admin, debugging, backup/restore |
+
+All three share the same SQLite storage, strength model, and
+conflict resolution. The library and MCP server provide all 8
+memory tools. The CLI provides read/write database access without
+embedding or LLM calls.
 
 ## Install
 
@@ -15,9 +24,9 @@ pnpm add hippo
 ```
 
 Peer dependencies: `better-sqlite3`, `@mariozechner/pi-agent-core`,
-`@mariozechner/pi-ai`, `@sinclair/typebox`.
+`@mariozechner/pi-ai`.
 
-## Quick start
+## Quick start — Library
 
 ```typescript
 import Database from "better-sqlite3";
@@ -30,11 +39,9 @@ const tools = createHippoTools({
   agentId: "my-agent",
   embed: async (text) => {
     // Your embedding function → Float32Array
-    // e.g. OpenAI text-embedding-3-small
     return callEmbeddingApi(text);
   },
   llm: {
-    // Cheap model for fact extraction (Gemini Flash, Haiku, etc.)
     complete: async (messages, systemPrompt) => {
       return callLlm(messages, systemPrompt);
     },
@@ -49,6 +56,151 @@ agent.addTools(tools);
 7 tools. Pass `messagesTable: "messages"` to get an 8th tool that
 searches conversation history via FTS5.
 
+### Built-in providers
+
+Don't want to wire up embedding and LLM functions yourself? Hippo
+ships OpenAI-compatible providers that work with any `/v1/embeddings`
+or `/v1/chat/completions` endpoint (OpenAI, OpenRouter, Ollama,
+vLLM, etc.):
+
+```typescript
+import Database from "better-sqlite3";
+import {
+  createHippoTools,
+  createEmbeddingProvider,
+  createLlmProvider,
+} from "hippo";
+
+const db = new Database("agent.db");
+
+const tools = createHippoTools({
+  db,
+  agentId: "my-agent",
+  embed: createEmbeddingProvider({
+    apiKey: process.env.OPENAI_API_KEY!,
+    baseUrl: "https://api.openai.com/v1",
+    model: "text-embedding-3-small",
+    dimensions: 1536, // optional
+  }),
+  llm: createLlmProvider({
+    apiKey: process.env.OPENROUTER_API_KEY!,
+    baseUrl: "https://openrouter.ai/api/v1",
+    model: "google/gemini-flash-2.0",
+  }),
+});
+```
+
+### Embedding model safety
+
+Call `verifyEmbeddingModel(db, "text-embedding-3-small")` after
+`initSchema` to lock the database to a specific embedding model.
+First call stores the model name. Subsequent calls throw if the
+model doesn't match — prevents mixing incompatible vector spaces.
+
+```typescript
+import { initSchema, verifyEmbeddingModel } from "hippo";
+
+initSchema(db);
+verifyEmbeddingModel(db, "text-embedding-3-small");
+// Later, with a different model:
+verifyEmbeddingModel(db, "voyage-3"); // throws!
+```
+
+## Quick start — MCP server
+
+The MCP server handles embedding and LLM calls internally. Clients
+send text; hippo vectorizes and stores. Every tool call takes an
+`agent_id` parameter for multi-agent support on a shared database.
+
+```bash
+# Required
+export HIPPO_DB=./agent.db
+export HIPPO_EMBED_KEY=sk-...
+export HIPPO_LLM_KEY=sk-...
+
+# Start HTTP/SSE server (default)
+hippo-server
+
+# Or STDIO for single-client piping
+HIPPO_TRANSPORT=stdio hippo-server
+```
+
+### Server environment variables
+
+| Variable | Required | Default |
+|----------|----------|---------|
+| `HIPPO_DB` | Yes | — |
+| `HIPPO_EMBED_KEY` | Yes | — |
+| `HIPPO_LLM_KEY` | Yes | — |
+| `HIPPO_TRANSPORT` | No | `http` |
+| `HIPPO_PORT` | No | `3100` |
+| `HIPPO_EMBED_URL` | No | `https://api.openai.com/v1` |
+| `HIPPO_EMBED_MODEL` | No | `text-embedding-3-small` |
+| `HIPPO_EMBED_DIMENSIONS` | No | (model default) |
+| `HIPPO_LLM_URL` | No | `https://openrouter.ai/api/v1` |
+| `HIPPO_LLM_MODEL` | No | `google/gemini-flash-2.0` |
+
+### HTTP endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/sse` | Open SSE connection (returns `sessionId`) |
+| `POST` | `/messages?sessionId=<id>` | Send MCP messages |
+| `GET` | `/health` | Health check (`{"status": "ok"}`) |
+
+## Quick start — CLI
+
+The CLI inspects and manages hippo databases without embedding or
+LLM access. For semantic operations, use the library or MCP server.
+
+```bash
+# Set once, or pass --db <path> to every command
+export HIPPO_DB=./agent.db
+
+# Initialize schema (idempotent)
+hippo init
+
+# Overview
+hippo stats
+hippo agents
+
+# Browse data
+hippo chunks my-agent
+hippo chunks my-agent --kind fact --limit 20
+hippo blocks my-agent
+hippo block my-agent persona
+
+# Text search (case-insensitive, across all agents)
+hippo search "redux" --kind fact
+
+# Maintenance
+hippo delete CHUNK_ID_1 CHUNK_ID_2 --force
+hippo purge --force
+hippo purge --agent my-agent --before 2025-01-01 --force
+
+# Backup and restore
+hippo export my-agent > backup.json
+hippo import backup.json
+```
+
+All commands support `--json` for machine-readable output.
+
+### CLI commands
+
+| Command | What it does |
+|---------|-------------|
+| `init` | Create tables and indexes (idempotent) |
+| `stats` | Chunk counts, block counts, agent count, file size |
+| `agents` | List all agent IDs with chunk counts |
+| `chunks <agent>` | List chunks with filters (`--kind`, `--superseded`, `--limit`) |
+| `blocks <agent>` | List memory blocks with sizes |
+| `block <agent> <key>` | Get contents of a named block |
+| `search <text>` | Case-insensitive LIKE search across chunks |
+| `delete <ids...>` | Hard delete by ID, resurrects superseded chunks |
+| `purge` | Remove superseded chunks (`--agent`, `--before` filters) |
+| `export <agent>` | Export all data as JSON (embeddings as base64) |
+| `import <file>` | Import from JSON, skip duplicate IDs |
+
 ## Tools
 
 ### Write
@@ -58,7 +210,7 @@ searches conversation history via FTS5.
 | `remember_facts` | Extract facts from text, rate intensity, detect duplicates and contradictions, store or update |
 | `store_memory` | Store raw content (docs, decisions, experiences) with content-hash dedup |
 | `append_memory_block` | Append text to a named block (creates if missing) |
-| `replace_memory_block` | Find/replace text in a named block |
+| `replace_memory_block` | Find/replace text in a named block (replaces all occurrences) |
 | `forget_memory` | Semantic match → hard delete. No audit trail. |
 
 ### Read
@@ -73,7 +225,7 @@ searches conversation history via FTS5.
 
 ### Facts vs memories
 
-Both live in the same table, distinguished by a `kind` column.
+Both live in the same `chunks` table, distinguished by a `kind` column.
 
 **Facts** are atomic claims that can conflict. "User lives in
 Berlin" can be superseded by "User lives in Bangkok." They go
@@ -101,13 +253,20 @@ effective_strength = intensity × e^(-λ / resistance × hours)
 resistance = 1 + log(1 + access_count) × 0.3
 ```
 
+| Access count | Decay resistance | Half-life |
+|--------------|-----------------|-----------|
+| 0 | 1.0 | ~29 days |
+| 5 | 1.54 | ~44 days |
+| 20 | 1.91 | ~55 days |
+| 100 | 2.38 | ~69 days |
+
 Memories below 5% effective strength are excluded from search
 results — effectively forgotten through disuse.
 
 ### Conflict resolution
 
 When `remember_facts` stores a new fact, it checks existing
-facts by cosine similarity:
+facts by cosine similarity (top 5 candidates):
 
 ```
 > 0.93  → auto-classify DUPLICATE, strengthen existing
@@ -119,6 +278,10 @@ The LLM returns one of three verdicts: **DUPLICATE** (same info,
 different words), **SUPERSEDES** (same topic, new value), or
 **DISTINCT** (related but both true).
 
+Facts extracted from the same text have intra-batch visibility —
+each fact sees the results of previously processed facts in the
+same call, preventing duplicate insertions within a batch.
+
 ### Search scoring
 
 `recall_memories` ranks results by a weighted composite:
@@ -129,10 +292,25 @@ score = 0.6 × cosine_similarity
       + 0.1 × recency_score
 ```
 
+Recency decays exponentially: ~0.97 at 3 days, ~0.74 at 30 days,
+~0.03 at 1 year.
+
 Accessed chunks get a small retrieval boost (+0.02 to intensity),
 so frequently recalled memories stay strong.
 
+### Forgetting
+
+`forget_memory` performs a hard delete. No soft deletes, no audit
+trail. When a deleted chunk had superseded another chunk, the
+superseded chunk is resurrected (its `superseded_by` reference is
+cleared).
+
+Memory blocks are not touched by `forget_memory` — use
+`replace_memory_block` separately if needed.
+
 ## Configuration
+
+### Library options
 
 ```typescript
 interface HippoOptions {
@@ -161,6 +339,29 @@ hippo can search it with FTS5. You own the table and FTS index;
 hippo just reads from it. Omit this to exclude
 `recall_conversation` from the tool set.
 
+### Embedding provider options
+
+```typescript
+interface EmbeddingProviderConfig {
+  apiKey: string;       // Bearer token
+  baseUrl: string;      // e.g. "https://api.openai.com/v1"
+  model: string;        // e.g. "text-embedding-3-small"
+  dimensions?: number;  // optional, model-dependent
+}
+```
+
+### LLM provider options
+
+```typescript
+interface LlmProviderConfig {
+  apiKey: string;        // Bearer token
+  baseUrl: string;       // e.g. "https://openrouter.ai/api/v1"
+  model: string;         // e.g. "google/gemini-flash-2.0"
+  maxTokens?: number;    // default: 2048
+  temperature?: number;  // default: 0
+}
+```
+
 ## LLM and embedding costs
 
 | Tool | LLM calls | Embed calls |
@@ -187,13 +388,52 @@ connection.
 ```
 chunks         — facts and memories with embeddings
 memory_blocks  — key-value text blocks (persona, objectives, etc.)
+hippo_meta     — embedding model tracking
 ```
 
 Brute-force cosine similarity is viable up to ~10k chunks per
 agent. Beyond that, pre-filter by recency or tags. Past 50k,
 consider migrating to sqlite-vec.
 
+## Exports
+
+The library exports both the tool factory and all building blocks:
+
+```typescript
+// Main API
+export { createHippoTools } from "hippo";
+
+// Built-in providers
+export { createEmbeddingProvider } from "hippo";
+export { createLlmProvider } from "hippo";
+
+// Schema utilities
+export { initSchema, verifyEmbeddingModel } from "hippo";
+
+// Types
+export type {
+  Chunk, ChunkKind, EmbedFn, HippoOptions,
+  LlmClient, MemoryBlock, RememberFactAction,
+  RememberFactsResult, SearchResult,
+  EmbeddingProviderConfig, LlmProviderConfig,
+} from "hippo";
+```
+
+## Development
+
+```bash
+pnpm install
+just ci          # build + check + test
+
+just build       # tsc → dist/
+just test        # vitest run (199 tests)
+just test-watch  # vitest watch mode
+just typecheck   # tsc --noEmit
+just check       # biome lint + format
+just fix         # auto-fix lint and format
+```
+
 ## Requirements
 
 - Node ≥ 22
-- pnpm (package manager)
+- pnpm
