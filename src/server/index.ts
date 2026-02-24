@@ -7,31 +7,30 @@
  * send text, hippo handles vectorization and extraction.
  *
  * Every tool call includes an `agent_id` parameter for multi-agent
- * support on a shared database.
+ * support on a shared database. Tool instances are created per-request
+ * (pure factory — no DB calls, just closure binding) to inject the
+ * caller's agent_id, then delegate to the library's battle-tested logic.
  */
 
 import { createServer } from "node:http";
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import Database from "better-sqlite3";
 import { z } from "zod";
 import { prepareStatements } from "../db.js";
-import { classifyConflict, extractFacts } from "../extractor.js";
-import { contentHash } from "../hash.js";
 import { createEmbeddingProvider } from "../providers/embedding.js";
 import { createLlmProvider } from "../providers/llm.js";
 import { initSchema, verifyEmbeddingModel } from "../schema.js";
-import { chunkEmbedding, cosineSimilarity, embeddingToBuffer } from "../similarity.js";
-import {
-	effectiveStrength,
-	recencyScore,
-	retrievalBoost,
-	STRENGTH_FLOOR,
-	searchScore,
-} from "../strength.js";
-import type { Chunk, EmbedFn, LlmClient } from "../types.js";
-import { ulid } from "../ulid.js";
+import { createAppendMemoryBlockTool } from "../tools/append-memory-block.js";
+import { createForgetMemoryTool } from "../tools/forget-memory.js";
+import { createRecallMemoriesTool } from "../tools/recall-memories.js";
+import { createRecallMemoryBlockTool } from "../tools/recall-memory-block.js";
+import { createRememberFactsTool } from "../tools/remember-facts.js";
+import { createReplaceMemoryBlockTool } from "../tools/replace-memory-block.js";
+import { createStoreMemoryTool } from "../tools/store-memory.js";
+import type { EmbedFn, LlmClient } from "../types.js";
 import { resolveConfig } from "./config.js";
 
 // ── Setup ────────────────────────────────────────────────────────────
@@ -50,128 +49,57 @@ const mcp = new McpServer({
 	version: "0.1.0", // x-release-please-version
 });
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Map an AgentToolResult to an MCP CallToolResult.
+ *
+ * Passes through text content. If `details` contains an `error` field,
+ * sets `isError: true` so MCP clients treat it as a tool error.
+ * Hippo tools only produce TextContent, so ImageContent entries are
+ * filtered out rather than throwing.
+ *
+ * @param result - AgentToolResult from a library tool
+ * @returns MCP-compatible CallToolResult
+ */
+// biome-ignore lint/suspicious/noExplicitAny: AgentToolResult generic varies per tool
+function toMcpResult(result: AgentToolResult<any>): {
+	content: Array<{ text: string; type: "text" }>;
+	isError?: boolean;
+} {
+	const hasError =
+		result.details != null && typeof result.details === "object" && "error" in result.details;
+	const textItems: Array<{ text: string; type: "text" }> = [];
+	for (const item of result.content) {
+		if (item.type === "text" && "text" in item) {
+			textItems.push({ text: (item as { text: string }).text, type: "text" });
+		}
+	}
+	return {
+		content: textItems,
+		...(hasError && { isError: true }),
+	};
+}
+
 // ── Tool: remember_facts ─────────────────────────────────────────────
 
 mcp.tool(
 	"remember_facts",
-	"Extract and store facts from text. Handles conflict resolution: duplicates strengthen, superseding facts replace old ones.",
+	"Extract discrete facts from text, rate their intensity, check for conflicts with existing knowledge, and store. Handles duplicates, supersession, and new facts.",
 	{
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
 		text: z.string().max(10_000).describe("Text containing facts to extract and remember"),
 	},
-	async ({ agent_id, text }) => {
-		const facts = await extractFacts(text, llm);
-		if (facts.length === 0) {
-			return { content: [{ type: "text", text: "No facts extracted." }] };
-		}
-
-		const results: string[] = [];
-
-		for (const { fact, intensity } of facts) {
-			const embedding = await embed(fact);
-			const embeddingBuf = embeddingToBuffer(embedding);
-			const now = new Date().toISOString();
-
-			// Find similar existing facts
-			const existing = stmts.getActiveChunksByAgent.all(agent_id, "fact", 200) as Chunk[];
-
-			let bestSim = 0;
-			let bestChunk: Chunk | null = null;
-			for (const chunk of existing) {
-				const sim = cosineSimilarity(embedding, chunkEmbedding(chunk));
-				if (sim > bestSim) {
-					bestSim = sim;
-					bestChunk = chunk;
-				}
-			}
-
-			if (bestSim > 0.93 && bestChunk) {
-				// Auto-DUPLICATE
-				const newIntensity =
-					(bestChunk.running_intensity * bestChunk.encounter_count + intensity) /
-					(bestChunk.encounter_count + 1);
-				stmts.reinforceChunk.run({
-					id: bestChunk.id,
-					last_accessed_at: now,
-					running_intensity: newIntensity,
-				});
-				results.push(`reinforced: "${fact}"`);
-			} else if (bestSim >= 0.78 && bestChunk) {
-				// LLM tiebreaker
-				const classification = await classifyConflict(fact, bestChunk.content, llm);
-
-				if (classification === "DUPLICATE") {
-					const newIntensity =
-						(bestChunk.running_intensity * bestChunk.encounter_count + intensity) /
-						(bestChunk.encounter_count + 1);
-					stmts.reinforceChunk.run({
-						id: bestChunk.id,
-						last_accessed_at: now,
-						running_intensity: newIntensity,
-					});
-					results.push(`reinforced: "${fact}"`);
-				} else if (classification === "SUPERSEDES") {
-					const newId = ulid();
-					db.transaction(() => {
-						stmts.insertChunk.run({
-							access_count: 0,
-							agent_id,
-							content: fact,
-							content_hash: null,
-							created_at: now,
-							embedding: embeddingBuf,
-							encounter_count: 1,
-							id: newId,
-							kind: "fact",
-							last_accessed_at: now,
-							metadata: null,
-							running_intensity: intensity,
-							superseded_by: null,
-						});
-						stmts.supersedeChunk.run(newId, bestChunk.id);
-					})();
-					results.push(`superseded: "${fact}" (replaced "${bestChunk.content}")`);
-				} else {
-					// DISTINCT
-					stmts.insertChunk.run({
-						access_count: 0,
-						agent_id,
-						content: fact,
-						content_hash: null,
-						created_at: now,
-						embedding: embeddingBuf,
-						encounter_count: 1,
-						id: ulid(),
-						kind: "fact",
-						last_accessed_at: now,
-						metadata: null,
-						running_intensity: intensity,
-						superseded_by: null,
-					});
-					results.push(`new: "${fact}"`);
-				}
-			} else {
-				// NEW
-				stmts.insertChunk.run({
-					access_count: 0,
-					agent_id,
-					content: fact,
-					content_hash: null,
-					created_at: now,
-					embedding: embeddingBuf,
-					encounter_count: 1,
-					id: ulid(),
-					kind: "fact",
-					last_accessed_at: now,
-					metadata: null,
-					running_intensity: intensity,
-					superseded_by: null,
-				});
-				results.push(`new: "${fact}"`);
-			}
-		}
-
-		return { content: [{ type: "text", text: results.join("\n") }] };
+	async ({ agent_id, text }, extra) => {
+		const tool = createRememberFactsTool({
+			agentId: agent_id,
+			db,
+			embed,
+			llm,
+			stmts,
+		});
+		const result = await tool.execute("mcp", { text }, extra.signal);
+		return toMcpResult(result);
 	},
 );
 
@@ -179,49 +107,20 @@ mcp.tool(
 
 mcp.tool(
 	"store_memory",
-	"Store raw content as a memory chunk. Deduplicates by content hash — storing the same text twice strengthens the existing memory instead of creating a duplicate.",
+	"Store a raw memory (document chunk, experience, decision). Deduplicates by content hash — identical content strengthens the existing memory.",
 	{
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
 		content: z.string().max(50_000).describe("Content to store as a memory"),
 		metadata: z.string().optional().describe("Optional JSON metadata"),
 	},
-	async ({ agent_id, content, metadata }) => {
-		const hash = contentHash(content);
-		const now = new Date().toISOString();
-
-		// Check for duplicate
-		const existing = stmts.getMemoryByHash.get(agent_id, hash) as Chunk | undefined;
-		if (existing) {
-			const boosted = retrievalBoost(existing.running_intensity);
-			stmts.reinforceChunk.run({
-				id: existing.id,
-				last_accessed_at: now,
-				running_intensity: boosted,
-			});
-			return {
-				content: [{ type: "text", text: `Memory already exists (strengthened): ${existing.id}` }],
-			};
-		}
-
-		const embedding = await embed(content);
-		const id = ulid();
-		stmts.insertChunk.run({
-			access_count: 0,
-			agent_id,
-			content,
-			content_hash: hash,
-			created_at: now,
-			embedding: embeddingToBuffer(embedding),
-			encounter_count: 1,
-			id,
-			kind: "memory",
-			last_accessed_at: now,
-			metadata: metadata ?? null,
-			running_intensity: 0.5,
-			superseded_by: null,
+	async ({ agent_id, content, metadata }, extra) => {
+		const tool = createStoreMemoryTool({
+			agentId: agent_id,
+			embed,
+			stmts,
 		});
-
-		return { content: [{ type: "text", text: `Stored memory: ${id}` }] };
+		const result = await tool.execute("mcp", { content, metadata }, extra.signal);
+		return toMcpResult(result);
 	},
 );
 
@@ -232,55 +131,18 @@ mcp.tool(
 	"Semantic search over stored facts and memories. Returns results ranked by relevance, strength, and recency.",
 	{
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
+		kind: z.enum(["fact", "memory"]).optional().describe("Filter by chunk kind (default: all)"),
 		limit: z.number().min(1).max(50).default(10).describe("Max results to return"),
 		query: z.string().describe("What to search for in memory"),
 	},
-	async ({ agent_id, limit, query }) => {
-		const queryEmbedding = await embed(query);
-		const now = new Date();
-
-		const allChunks = stmts.getAllActiveChunksByAgent.all(agent_id, 10_000) as Chunk[];
-
-		const scored: Array<{ chunk: Chunk; score: number }> = [];
-		for (const chunk of allChunks) {
-			const similarity = cosineSimilarity(queryEmbedding, chunkEmbedding(chunk));
-			if (similarity < 0.1) continue;
-
-			const hoursSince =
-				(now.getTime() - new Date(chunk.last_accessed_at).getTime()) / (1000 * 60 * 60);
-			const strength = effectiveStrength(chunk.running_intensity, chunk.access_count, hoursSince);
-			if (strength < STRENGTH_FLOOR) continue;
-
-			const daysSince =
-				(now.getTime() - new Date(chunk.created_at).getTime()) / (1000 * 60 * 60 * 24);
-			const recency = recencyScore(daysSince);
-			scored.push({ chunk, score: searchScore(similarity, strength, recency) });
-		}
-
-		scored.sort((a, b) => b.score - a.score);
-		const top = scored.slice(0, limit);
-
-		// Retrieval boost
-		for (const { chunk } of top) {
-			try {
-				stmts.touchChunk.run({
-					id: chunk.id,
-					last_accessed_at: now.toISOString(),
-					running_intensity: retrievalBoost(chunk.running_intensity),
-				});
-			} catch {
-				// Non-fatal
-			}
-		}
-
-		if (top.length === 0) {
-			return { content: [{ type: "text", text: "No memories found." }] };
-		}
-
-		const lines = top.map(
-			(r, i) => `${i + 1}. [${r.chunk.kind}] (score: ${r.score.toFixed(3)}) ${r.chunk.content}`,
-		);
-		return { content: [{ type: "text", text: lines.join("\n") }] };
+	async ({ agent_id, kind, limit, query }, extra) => {
+		const tool = createRecallMemoriesTool({
+			agentId: agent_id,
+			embed,
+			stmts,
+		});
+		const result = await tool.execute("mcp", { kind, limit, query }, extra.signal);
+		return toMcpResult(result);
 	},
 );
 
@@ -288,41 +150,22 @@ mcp.tool(
 
 mcp.tool(
 	"forget_memory",
-	"Forget memories matching a description. Embeds the description, finds semantically similar chunks, and hard-deletes them.",
+	"Forget specific memories or facts. Performs semantic match and hard deletes matching entries. No record of the forget request is stored.",
 	{
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
 		description: z.string().describe("Description of what to forget"),
 		threshold: z.number().min(0).max(1).default(0.7).describe("Minimum similarity to delete"),
 	},
-	async ({ agent_id, description, threshold }) => {
-		const queryEmbedding = await embed(description);
-		const allChunks = stmts.getAllActiveChunksByAgent.all(agent_id, 10_000) as Chunk[];
-
-		const toDelete: Chunk[] = [];
-		for (const chunk of allChunks) {
-			const sim = cosineSimilarity(queryEmbedding, chunkEmbedding(chunk));
-			if (sim >= threshold) {
-				toDelete.push(chunk);
-			}
-		}
-
-		if (toDelete.length === 0) {
-			return { content: [{ type: "text", text: "No matching memories found to forget." }] };
-		}
-
-		db.transaction(() => {
-			for (const chunk of toDelete) {
-				stmts.clearSupersededBy.run(chunk.id, agent_id);
-				stmts.deleteChunk.run(chunk.id);
-			}
-		})();
-
-		const lines = toDelete.map((c) => `- [${c.kind}] ${c.content}`);
-		return {
-			content: [
-				{ type: "text", text: `Forgot ${toDelete.length} memory(s):\n${lines.join("\n")}` },
-			],
-		};
+	async ({ agent_id, description, threshold }, extra) => {
+		const tool = createForgetMemoryTool({
+			agentId: agent_id,
+			db,
+			embed,
+			forgetThreshold: threshold,
+			stmts,
+		});
+		const result = await tool.execute("mcp", { description }, extra.signal);
+		return toMcpResult(result);
 	},
 );
 
@@ -330,17 +173,18 @@ mcp.tool(
 
 mcp.tool(
 	"recall_memory_block",
-	"Read the contents of a named memory block (key-value text buffer like persona, objectives, etc.).",
+	"Retrieve the contents of a named memory block. Returns null if the block doesn't exist.",
 	{
 		agent_id: z.string().describe("Agent namespace"),
 		key: z.string().describe("Block key (e.g. persona, objectives)"),
 	},
 	async ({ agent_id, key }) => {
-		const row = stmts.getBlockByKey.get(agent_id, key) as { value: string } | undefined;
-		if (!row) {
-			return { content: [{ type: "text", text: `Block "${key}" not found.` }] };
-		}
-		return { content: [{ type: "text", text: row.value }] };
+		const tool = createRecallMemoryBlockTool({
+			agentId: agent_id,
+			stmts,
+		});
+		const result = await tool.execute("mcp", { key });
+		return toMcpResult(result);
 	},
 );
 
@@ -348,7 +192,7 @@ mcp.tool(
 
 mcp.tool(
 	"replace_memory_block",
-	"Find and replace text within a named memory block. Returns error if block doesn't exist or text not found.",
+	"Find and replace text in a named memory block. Replaces all occurrences. Returns error if block doesn't exist or text not found.",
 	{
 		agent_id: z.string().describe("Agent namespace"),
 		key: z.string().describe("Block key"),
@@ -356,22 +200,12 @@ mcp.tool(
 		old_text: z.string().min(1).describe("Text to find"),
 	},
 	async ({ agent_id, key, new_text, old_text }) => {
-		const row = stmts.getBlockByKey.get(agent_id, key) as { value: string } | undefined;
-		if (!row) {
-			return {
-				content: [{ type: "text", text: `Block "${key}" not found.` }],
-				isError: true,
-			};
-		}
-		if (!row.value.includes(old_text)) {
-			return {
-				content: [{ type: "text", text: `Text not found in block "${key}".` }],
-				isError: true,
-			};
-		}
-		const updated = row.value.replace(old_text, new_text);
-		stmts.upsertBlock.run({ agent_id, key, updated_at: new Date().toISOString(), value: updated });
-		return { content: [{ type: "text", text: `Updated block "${key}".` }] };
+		const tool = createReplaceMemoryBlockTool({
+			agentId: agent_id,
+			stmts,
+		});
+		const result = await tool.execute("mcp", { key, newText: new_text, oldText: old_text });
+		return toMcpResult(result);
 	},
 );
 
@@ -379,27 +213,19 @@ mcp.tool(
 
 mcp.tool(
 	"append_memory_block",
-	"Append text to a named memory block. Creates the block if it doesn't exist.",
+	"Append text to a named memory block. Creates the block if it doesn't exist (upsert).",
 	{
 		agent_id: z.string().describe("Agent namespace"),
 		content: z.string().describe("Text to append"),
 		key: z.string().describe("Block key"),
 	},
 	async ({ agent_id, content, key }) => {
-		const row = stmts.getBlockByKey.get(agent_id, key) as { value: string } | undefined;
-		const newValue = row ? row.value + content : content;
-		stmts.upsertBlock.run({
-			agent_id,
-			key,
-			updated_at: new Date().toISOString(),
-			value: newValue,
+		const tool = createAppendMemoryBlockTool({
+			agentId: agent_id,
+			stmts,
 		});
-		const sizeBytes = new TextEncoder().encode(newValue).byteLength;
-		let msg = `Appended to block "${key}" (${sizeBytes} bytes).`;
-		if (sizeBytes > 100_000) {
-			msg += " Warning: block exceeds 100KB.";
-		}
-		return { content: [{ type: "text", text: msg }] };
+		const result = await tool.execute("mcp", { content, key });
+		return toMcpResult(result);
 	},
 );
 
