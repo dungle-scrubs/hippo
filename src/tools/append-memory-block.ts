@@ -3,6 +3,9 @@ import { Type } from "@mariozechner/pi-ai";
 import type { DbStatements } from "../db.js";
 import type { MemoryBlock } from "../types.js";
 
+/** Threshold in bytes at which the tool warns about block size. */
+const BLOCK_SIZE_WARNING_BYTES = 100_000;
+
 const Params = Type.Object({
 	content: Type.String({ description: "Text to append to the block" }),
 	key: Type.String({ description: "Block name (e.g. 'persona', 'human', 'objectives')" }),
@@ -44,9 +47,14 @@ export function createAppendMemoryBlockTool(
 			});
 
 			const action = existing ? "appended to" : "created";
-			const result: AgentToolResult<{ action: string }> = {
-				content: [{ text: `${action} block "${params.key}"`, type: "text" }],
-				details: { action },
+			const sizeBytes = new TextEncoder().encode(newValue).byteLength;
+			const warning =
+				sizeBytes > BLOCK_SIZE_WARNING_BYTES
+					? ` (warning: block is ${Math.round(sizeBytes / 1024)}KB — consider using replace_memory_block to trim)`
+					: "";
+			const result: AgentToolResult<{ action: string; sizeBytes: number }> = {
+				content: [{ text: `${action} block "${params.key}"${warning}`, type: "text" }],
+				details: { action, sizeBytes },
 			};
 			return result;
 		},

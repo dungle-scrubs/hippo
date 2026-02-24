@@ -12,11 +12,18 @@ const Params = Type.Object({
 /** A row from the messages FTS search. */
 interface MessageSearchRow {
 	readonly content: string;
-	readonly created_at?: string;
-	readonly role?: string;
+	readonly created_at: string;
+	readonly role: string;
 }
 
-/** Options for creating the recall_conversation tool. */
+/**
+ * Options for creating the recall_conversation tool.
+ *
+ * The messages table must have columns: `id` (INTEGER PRIMARY KEY),
+ * `role` (TEXT), `content` (TEXT), `created_at` (TEXT).
+ * An FTS5 virtual table named `{messagesTable}_fts` must index the
+ * `content` column with `content_rowid=id`.
+ */
 export interface RecallConversationToolOptions {
 	readonly db: Database;
 	readonly messagesTable: string;
@@ -108,9 +115,7 @@ export function createRecallConversationTool(
 			}
 
 			const lines = rows.map((r, i) => {
-				const prefix = r.role ? `[${r.role}]` : "";
-				const date = r.created_at ? ` (${r.created_at})` : "";
-				return `${i + 1}. ${prefix}${date} ${r.content}`;
+				return `${i + 1}. [${r.role}] (${r.created_at}) ${r.content}`;
 			});
 
 			const result: AgentToolResult<{ matches: number }> = {

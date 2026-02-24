@@ -7,6 +7,9 @@ import { updatedIntensity } from "../strength.js";
 import type { Chunk, EmbedFn } from "../types.js";
 import { ulid } from "../ulid.js";
 
+/** Maximum content length in characters (default 50KB). */
+const MAX_CONTENT_LENGTH = 50_000;
+
 const Params = Type.Object({
 	content: Type.String({ description: "Content to store as a memory" }),
 	metadata: Type.Optional(
@@ -20,6 +23,8 @@ const Params = Type.Object({
 export interface StoreMemoryToolOptions {
 	readonly agentId: string;
 	readonly embed: EmbedFn;
+	/** Max content length in characters (default: 50,000). */
+	readonly maxContentLength?: number;
 	readonly stmts: DbStatements;
 }
 
@@ -51,6 +56,13 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 		description:
 			"Store a raw memory (document chunk, experience, decision). Deduplicates by content hash — identical content strengthens the existing memory.",
 		execute: async (_toolCallId, params, signal) => {
+			const maxLen = opts.maxContentLength ?? MAX_CONTENT_LENGTH;
+			if (params.content.length > maxLen) {
+				throw new Error(
+					`Content too long (${params.content.length} chars, max ${maxLen}). Chunk the content before storing.`,
+				);
+			}
+
 			if (params.metadata !== undefined) {
 				try {
 					JSON.parse(params.metadata);

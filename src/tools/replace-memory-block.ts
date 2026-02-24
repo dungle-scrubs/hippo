@@ -32,6 +32,14 @@ export function createReplaceMemoryBlockTool(
 		description:
 			"Find and replace text in a named memory block. Replaces all occurrences. Returns error if block doesn't exist or text not found.",
 		execute: async (_toolCallId, params) => {
+			if (params.oldText.length === 0) {
+				const result: AgentToolResult<{ error: string }> = {
+					content: [{ text: "Error: oldText must not be empty", type: "text" }],
+					details: { error: "empty_old_text" },
+				};
+				return result;
+			}
+
 			const row = opts.stmts.getBlockByKey.get(opts.agentId, params.key) as MemoryBlock | undefined;
 
 			if (!row) {

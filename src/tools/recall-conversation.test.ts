@@ -134,6 +134,15 @@ describe("recall_conversation", () => {
 		).not.toThrow();
 	});
 
+	it("handles empty query string gracefully", async () => {
+		const tool = createRecallConversationTool({ db, messagesTable: "messages" });
+
+		// FTS5 rejects empty MATCH — should return a query_error, not crash
+		const result = await tool.execute("tc1", { query: "" });
+
+		expect(result.details.error).toBeDefined();
+	});
+
 	it("returns query_error for bad FTS syntax instead of fts_unavailable", async () => {
 		const tool = createRecallConversationTool({ db, messagesTable: "messages" });
 

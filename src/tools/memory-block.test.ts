@@ -172,6 +172,28 @@ describe("memory block tools", () => {
 			expect(row.value).toBe("ba");
 		});
 
+		it("returns error for empty oldText", async () => {
+			stmts.upsertBlock.run({
+				agent_id: AGENT_ID,
+				key: "persona",
+				updated_at: new Date().toISOString(),
+				value: "A helpful assistant",
+			});
+
+			const tool = createReplaceMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			const result = await tool.execute("tc1", {
+				key: "persona",
+				newText: "X",
+				oldText: "",
+			});
+
+			expect(result.details.error).toBe("empty_old_text");
+
+			// Block should be unchanged
+			const row = stmts.getBlockByKey.get(AGENT_ID, "persona") as MemoryBlock;
+			expect(row.value).toBe("A helpful assistant");
+		});
+
 		it("replaces all occurrences", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
@@ -190,6 +212,68 @@ describe("memory block tools", () => {
 			const row = stmts.getBlockByKey.get(AGENT_ID, "notes") as MemoryBlock;
 			expect(row.value).toBe("qux bar qux baz qux");
 			expect(result.details.replacements).toBe(3);
+		});
+
+		it("isolates blocks by agent_id", async () => {
+			stmts.upsertBlock.run({
+				agent_id: "other-agent",
+				key: "persona",
+				updated_at: new Date().toISOString(),
+				value: "Other agent likes cats",
+			});
+
+			const tool = createReplaceMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			const result = await tool.execute("tc1", {
+				key: "persona",
+				newText: "dogs",
+				oldText: "cats",
+			});
+
+			// Should not find the other agent's block
+			expect(result.details.error).toBe("block_not_found");
+
+			// Other agent's block should be unchanged
+			const row = stmts.getBlockByKey.get("other-agent", "persona") as MemoryBlock;
+			expect(row.value).toBe("Other agent likes cats");
+		});
+	});
+
+	describe("append_memory_block size warning", () => {
+		it("returns sizeBytes in details", async () => {
+			const tool = createAppendMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			const result = await tool.execute("tc1", { content: "small", key: "notes" });
+
+			expect(result.details.sizeBytes).toBeGreaterThan(0);
+		});
+
+		it("warns when block exceeds 100KB", async () => {
+			// Seed a block just under 100KB
+			const bigContent = "x".repeat(99_000);
+			stmts.upsertBlock.run({
+				agent_id: AGENT_ID,
+				key: "notes",
+				updated_at: new Date().toISOString(),
+				value: bigContent,
+			});
+
+			const tool = createAppendMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			// Append enough to push it over 100KB
+			const result = await tool.execute("tc1", {
+				content: "y".repeat(2000),
+				key: "notes",
+			});
+
+			const text = result.content[0];
+			expect(text?.type === "text" && text.text).toContain("warning");
+			expect(text?.type === "text" && text.text).toContain("KB");
+		});
+
+		it("does not warn for blocks under 100KB", async () => {
+			const tool = createAppendMemoryBlockTool({ agentId: AGENT_ID, stmts });
+			const result = await tool.execute("tc1", { content: "short content", key: "notes" });
+
+			const text = result.content[0];
+			expect(text?.type === "text" && text.text).not.toContain("warning");
 		});
 	});
 });

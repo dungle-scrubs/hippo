@@ -204,4 +204,30 @@ describe("store_memory", () => {
 		expect(chunks).toHaveLength(1);
 		expect(chunks[0]?.encounter_count).toBe(2);
 	});
+
+	it("rejects content exceeding maxContentLength", async () => {
+		const tool = createStoreMemoryTool({
+			agentId: AGENT_ID,
+			embed: mockEmbed,
+			maxContentLength: 100,
+			stmts,
+		});
+
+		await expect(tool.execute("tc1", { content: "x".repeat(101) })).rejects.toThrow(
+			"Content too long",
+		);
+		expect(mockEmbed).not.toHaveBeenCalled();
+	});
+
+	it("allows content within maxContentLength", async () => {
+		const tool = createStoreMemoryTool({
+			agentId: AGENT_ID,
+			embed: mockEmbed,
+			maxContentLength: 100,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { content: "x".repeat(100) });
+		expect(result.details.action).toBe("stored");
+	});
 });
