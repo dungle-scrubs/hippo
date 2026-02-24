@@ -366,6 +366,33 @@ describe("remember_facts", () => {
 		expect(chunks).toHaveLength(0);
 	});
 
+	it("respects maxSearchFacts cap during conflict resolution", async () => {
+		// Insert 3 existing facts with same embedding — would normally be duplicates
+		for (let i = 0; i < 3; i++) {
+			insertFact(stmts, `Existing fact ${i}`, FIXED_EMBED);
+		}
+
+		const llm = mockLlm('[{"fact": "Same direction fact", "intensity": 0.5}]');
+		const embed: EmbedFn = vi.fn(async () => FIXED_EMBED);
+
+		// Cap to 0 — no existing facts loaded for comparison
+		const tool = createRememberFactsTool({
+			agentId: AGENT_ID,
+			embed,
+			llm,
+			maxSearchFacts: 0,
+			stmts,
+		});
+
+		const result = await tool.execute("tc1", { text: "test" });
+
+		// Inserted as new because no existing facts were visible for comparison
+		expect(result.details.facts[0]?.action).toBe("inserted");
+
+		const chunks = db.prepare("SELECT * FROM chunks WHERE agent_id = ?").all(AGENT_ID) as Chunk[];
+		expect(chunks).toHaveLength(4); // 3 existing + 1 new
+	});
+
 	it("propagates embed errors — no partial inserts", async () => {
 		const llm = mockLlm('[{"fact": "User likes cats", "intensity": 0.5}]');
 		const embed: EmbedFn = vi.fn().mockRejectedValue(new Error("Embedding service down"));

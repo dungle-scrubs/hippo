@@ -20,6 +20,9 @@ const AMBIGUOUS_THRESHOLD = 0.78;
 /** Top N existing chunks to compare against. */
 const TOP_K_CANDIDATES = 5;
 
+/** Default max existing facts to load for conflict resolution. */
+const DEFAULT_MAX_SEARCH_FACTS = 10_000;
+
 const Params = Type.Object({
 	text: Type.String({
 		description: "Text containing facts to extract and remember",
@@ -31,6 +34,8 @@ export interface RememberFactsToolOptions {
 	readonly agentId: string;
 	readonly embed: EmbedFn;
 	readonly llm: LlmClient;
+	/** Max existing facts to load for conflict resolution (default: 10,000). */
+	readonly maxSearchFacts?: number;
 	readonly stmts: DbStatements;
 }
 
@@ -66,7 +71,8 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 			//
 			// Load facts once — processFact maintains this array across iterations
 			// for intra-batch visibility (e.g., dedup between extracted facts).
-			const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact");
+			const maxFacts = opts.maxSearchFacts ?? DEFAULT_MAX_SEARCH_FACTS;
+			const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact", maxFacts);
 
 			for (const { fact, intensity } of extracted) {
 				const action = await processFact(fact, intensity, existingFacts, opts, signal);
