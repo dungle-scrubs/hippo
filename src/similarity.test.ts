@@ -52,6 +52,7 @@ describe("bufferToEmbedding / embeddingToBuffer", () => {
 
 		expect(restored.length).toBe(original.length);
 		for (let i = 0; i < original.length; i++) {
+			// biome-ignore lint/style/noNonNullAssertion: loop bounded by length
 			expect(restored[i]).toBeCloseTo(original[i]!, 5);
 		}
 	});
