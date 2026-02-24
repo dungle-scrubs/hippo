@@ -114,7 +114,7 @@ const program = new Command()
 			"Database path: pass --db <path> or set HIPPO_DB env var.",
 		].join("\n"),
 	)
-	.version("0.1.0")
+	.version("0.1.0") // x-release-please-version
 	.option("--db <path>", "SQLite database path (env: HIPPO_DB)");
 
 // ── init ─────────────────────────────────────────────────────────────
