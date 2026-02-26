@@ -1,6 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import type { DbStatements } from "../db.js";
+import { type DbStatements, normalizeScope } from "../db.js";
 import type { MemoryBlock } from "../types.js";
 
 const Params = Type.Object({
@@ -12,6 +12,7 @@ const Params = Type.Object({
 /** Options for creating the recall_memory_block tool. */
 export interface RecallMemoryBlockToolOptions {
 	readonly agentId: string;
+	readonly scope?: string;
 	readonly stmts: DbStatements;
 }
 
@@ -30,7 +31,10 @@ export function createRecallMemoryBlockTool(
 		description:
 			"Retrieve the contents of a named memory block. Returns null if the block doesn't exist.",
 		execute: async (_toolCallId, params) => {
-			const row = opts.stmts.getBlockByKey.get(opts.agentId, params.key) as MemoryBlock | undefined;
+			const scope = normalizeScope(opts.scope);
+			const row = opts.stmts.getBlockByKeyAndScope.get(opts.agentId, scope, params.key) as
+				| MemoryBlock
+				| undefined;
 
 			const result: AgentToolResult<{ value: string | null }> = {
 				content: [

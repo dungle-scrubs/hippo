@@ -1,6 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import type { DbStatements } from "../db.js";
+import { type DbStatements, normalizeScope } from "../db.js";
 import type { MemoryBlock } from "../types.js";
 
 const Params = Type.Object({
@@ -12,6 +12,7 @@ const Params = Type.Object({
 /** Options for creating the replace_memory_block tool. */
 export interface ReplaceMemoryBlockToolOptions {
 	readonly agentId: string;
+	readonly scope?: string;
 	readonly stmts: DbStatements;
 }
 
@@ -40,7 +41,10 @@ export function createReplaceMemoryBlockTool(
 				return result;
 			}
 
-			const row = opts.stmts.getBlockByKey.get(opts.agentId, params.key) as MemoryBlock | undefined;
+			const scope = normalizeScope(opts.scope);
+			const row = opts.stmts.getBlockByKeyAndScope.get(opts.agentId, scope, params.key) as
+				| MemoryBlock
+				| undefined;
 
 			if (!row) {
 				const result: AgentToolResult<{ error: string }> = {
@@ -68,6 +72,7 @@ export function createReplaceMemoryBlockTool(
 
 			opts.stmts.upsertBlock.run({
 				agent_id: opts.agentId,
+				scope,
 				key: params.key,
 				updated_at: now,
 				value: newValue,

@@ -1,6 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import type { DbStatements } from "../db.js";
+import { type DbStatements, normalizeScope } from "../db.js";
 import type { MemoryBlock } from "../types.js";
 
 /** Threshold in bytes at which the tool warns about block size. */
@@ -14,6 +14,7 @@ const Params = Type.Object({
 /** Options for creating the append_memory_block tool. */
 export interface AppendMemoryBlockToolOptions {
 	readonly agentId: string;
+	readonly scope?: string;
 	readonly stmts: DbStatements;
 }
 
@@ -33,7 +34,8 @@ export function createAppendMemoryBlockTool(
 			"Append text to a named memory block. Creates the block if it doesn't exist (upsert).",
 		execute: async (_toolCallId, params) => {
 			const now = new Date().toISOString();
-			const existing = opts.stmts.getBlockByKey.get(opts.agentId, params.key) as
+			const scope = normalizeScope(opts.scope);
+			const existing = opts.stmts.getBlockByKeyAndScope.get(opts.agentId, scope, params.key) as
 				| MemoryBlock
 				| undefined;
 
@@ -41,6 +43,7 @@ export function createAppendMemoryBlockTool(
 
 			opts.stmts.upsertBlock.run({
 				agent_id: opts.agentId,
+				scope,
 				key: params.key,
 				updated_at: now,
 				value: newValue,

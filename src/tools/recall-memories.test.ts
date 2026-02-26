@@ -27,6 +27,7 @@ function insertChunk(
 	stmts.insertChunk.run({
 		access_count: overrides.access_count ?? 0,
 		agent_id: AGENT_ID,
+		scope: overrides.scope ?? "",
 		content: overrides.content,
 		content_hash: overrides.content_hash ?? null,
 		created_at: overrides.created_at ?? now,

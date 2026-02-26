@@ -36,6 +36,7 @@ describe("memory block tools", () => {
 		it("returns block value when it exists", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "persona",
 				updated_at: new Date().toISOString(),
 				value: "A helpful assistant",
@@ -50,6 +51,7 @@ describe("memory block tools", () => {
 		it("isolates blocks by agent_id", async () => {
 			stmts.upsertBlock.run({
 				agent_id: "other-agent",
+				scope: "",
 				key: "persona",
 				updated_at: new Date().toISOString(),
 				value: "Other agent persona",
@@ -79,6 +81,7 @@ describe("memory block tools", () => {
 		it("updates updated_at timestamp on append", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "objectives",
 				updated_at: "2020-01-01T00:00:00.000Z",
 				value: "Initial",
@@ -94,6 +97,7 @@ describe("memory block tools", () => {
 		it("appends to existing block with newline separator", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "objectives",
 				updated_at: new Date().toISOString(),
 				value: "First line",
@@ -122,6 +126,7 @@ describe("memory block tools", () => {
 		it("returns error when text not found", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "persona",
 				updated_at: new Date().toISOString(),
 				value: "A helpful assistant",
@@ -140,6 +145,7 @@ describe("memory block tools", () => {
 		it("replaces text in block", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "persona",
 				updated_at: new Date().toISOString(),
 				value: "A helpful assistant who likes cats",
@@ -159,6 +165,7 @@ describe("memory block tools", () => {
 		it("handles overlapping pattern in replaceAll", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "notes",
 				updated_at: new Date().toISOString(),
 				value: "aaa",
@@ -175,6 +182,7 @@ describe("memory block tools", () => {
 		it("returns error for empty oldText", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "persona",
 				updated_at: new Date().toISOString(),
 				value: "A helpful assistant",
@@ -197,6 +205,7 @@ describe("memory block tools", () => {
 		it("replaces all occurrences", async () => {
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "notes",
 				updated_at: new Date().toISOString(),
 				value: "foo bar foo baz foo",
@@ -217,6 +226,7 @@ describe("memory block tools", () => {
 		it("isolates blocks by agent_id", async () => {
 			stmts.upsertBlock.run({
 				agent_id: "other-agent",
+				scope: "",
 				key: "persona",
 				updated_at: new Date().toISOString(),
 				value: "Other agent likes cats",
@@ -251,6 +261,7 @@ describe("memory block tools", () => {
 			const bigContent = "x".repeat(99_000);
 			stmts.upsertBlock.run({
 				agent_id: AGENT_ID,
+				scope: "",
 				key: "notes",
 				updated_at: new Date().toISOString(),
 				value: bigContent,

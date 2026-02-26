@@ -9,7 +9,7 @@ import {
 	STRENGTH_FLOOR,
 	searchScore,
 } from "../strength.js";
-import type { ChunkKind, EmbedFn, SearchResult } from "../types.js";
+import type { ChunkKind, EmbedFn, ScopeFilter, SearchResult } from "../types.js";
 
 /** Default maximum chunks to load for brute-force semantic search. */
 const DEFAULT_MAX_SEARCH_CHUNKS = 10_000;
@@ -54,6 +54,8 @@ export interface RecallMemoriesToolOptions {
 	readonly maxSearchChunks?: number;
 	/** Minimum cosine similarity to include in results (default: 0.1). */
 	readonly minSimilarity?: number;
+	/** Optional scope filter used while loading candidate chunks. */
+	readonly scope?: ScopeFilter;
 	readonly stmts: DbStatements;
 }
 
@@ -83,8 +85,8 @@ export function createRecallMemoriesTool(
 			// Load active chunks, optionally filtered by kind.
 			// Capped to avoid loading unbounded data into memory.
 			const allChunks = kind
-				? getActiveChunks(opts.stmts, opts.agentId, kind, maxChunks)
-				: getAllActiveChunks(opts.stmts, opts.agentId, maxChunks);
+				? getActiveChunks(opts.stmts, opts.agentId, kind, maxChunks, opts.scope)
+				: getAllActiveChunks(opts.stmts, opts.agentId, maxChunks, opts.scope);
 
 			// Score and filter
 			const scored: SearchResult[] = [];
