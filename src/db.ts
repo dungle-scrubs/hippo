@@ -33,6 +33,9 @@ function normalizeScopeFilter(filter?: ScopeFilter): readonly string[] | undefin
 		return undefined;
 	}
 	const raw = Array.isArray(filter) ? filter : [filter];
+	if (raw.length === 0) {
+		return [];
+	}
 	const normalized = raw.map((entry) => normalizeScope(entry));
 	return [...new Set(normalized)];
 }
@@ -141,6 +144,9 @@ export function getActiveChunks(
 	if (!scopes) {
 		return stmts.getActiveChunksByAgent.all(agentId, kind, limit) as Chunk[];
 	}
+	if (scopes.length === 0) {
+		return [];
+	}
 	if (scopes.length === 1) {
 		return stmts.getActiveChunksByAgentAndScope.all(agentId, kind, scopes[0], limit) as Chunk[];
 	}
@@ -174,6 +180,9 @@ export function getAllActiveChunks(
 	const scopes = normalizeScopeFilter(scope);
 	if (!scopes) {
 		return stmts.getAllActiveChunksByAgent.all(agentId, limit) as Chunk[];
+	}
+	if (scopes.length === 0) {
+		return [];
 	}
 	if (scopes.length === 1) {
 		return stmts.getAllActiveChunksByAgentAndScope.all(agentId, scopes[0], limit) as Chunk[];

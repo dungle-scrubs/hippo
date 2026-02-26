@@ -29,7 +29,7 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 
 	const common = { agentId: opts.agentId, scope: opts.scope, stmts };
 	const withEmbed = { ...common, embed: opts.embed };
-	const recallScope = opts.recallScopes ?? (opts.scope ? [opts.scope] : undefined);
+	const recallScope = opts.recallScopes ?? (opts.scope !== undefined ? [opts.scope] : undefined);
 
 	// biome-ignore lint/suspicious/noExplicitAny: AgentTool generics don't unify across different parameter schemas
 	const tools: AgentTool<any>[] = [
@@ -54,6 +54,7 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 	return tools;
 }
 
+export { deleteChunk, updateChunk } from "./chunk-mutations.js";
 export type { EmbeddingProviderConfig } from "./providers/embedding.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { LlmProviderConfig } from "./providers/llm.js";

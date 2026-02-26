@@ -79,8 +79,8 @@ export interface HippoOptions {
 	readonly messagesTable?: string;
 	/** Optional default scope for writes and memory block operations. */
 	readonly scope?: string;
-	/** Optional recall scope filter. Defaults to [scope] when scope is set. */
-	readonly recallScopes?: readonly string[];
+	/** Optional recall scope filter (single scope or list). Defaults to [scope] when scope is set. */
+	readonly recallScopes?: ScopeFilter;
 }
 
 /** Result summary returned by remember_facts. */
