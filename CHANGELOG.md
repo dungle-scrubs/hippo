@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/dungle-scrubs/hippo/compare/hippo-v0.2.0...hippo-v0.2.1) (2026-02-26)
+
+
+### Added
+
+* add scoped recall fixes and dashboard chunk mutation APIs ([#8](https://github.com/dungle-scrubs/hippo/issues/8)) ([819d0f3](https://github.com/dungle-scrubs/hippo/commit/819d0f3d7aa9e99694c61bd784cb577290a7bebe))
+
+
+### Documentation
+
+* correct MCP server tool count in README ([6e3d661](https://github.com/dungle-scrubs/hippo/commit/6e3d661074d0f6d232b0f3b47dd82cf2a0a4face))
+
 ## [0.2.0](https://github.com/dungle-scrubs/hippo/compare/hippo-v0.1.0...hippo-v0.2.0) (2026-02-24)
 
 
