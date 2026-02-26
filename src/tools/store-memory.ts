@@ -1,6 +1,6 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
-import type { DbStatements } from "../db.js";
+import { type DbStatements, normalizeScope } from "../db.js";
 import { contentHash } from "../hash.js";
 import { embeddingToBuffer } from "../similarity.js";
 import { updatedIntensity } from "../strength.js";
@@ -25,6 +25,8 @@ export interface StoreMemoryToolOptions {
 	readonly embed: EmbedFn;
 	/** Max content length in characters (default: 50,000). */
 	readonly maxContentLength?: number;
+	/** Optional scope used for reads/writes (empty string = global). */
+	readonly scope?: string;
 	readonly stmts: DbStatements;
 }
 
@@ -56,6 +58,7 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 		description:
 			"Store a raw memory (document chunk, experience, decision). Deduplicates by content hash — identical content strengthens the existing memory.",
 		execute: async (_toolCallId, params, signal) => {
+			const resolvedScope = normalizeScope(opts.scope);
 			const maxLen = opts.maxContentLength ?? MAX_CONTENT_LENGTH;
 			if (params.content.length > maxLen) {
 				throw new Error(
@@ -75,7 +78,9 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 			const hash = contentHash(params.content);
 
 			// Check for verbatim duplicate using the content_hash index
-			const existing = opts.stmts.getMemoryByHash.get(opts.agentId, hash) as Chunk | undefined;
+			const existing = opts.stmts.getMemoryByHashAndScope.get(opts.agentId, resolvedScope, hash) as
+				| Chunk
+				| undefined;
 
 			if (existing) {
 				// Strengthen existing memory — treat re-encounter at default intensity (0.5)
@@ -109,6 +114,7 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 				opts.stmts.insertChunk.run({
 					access_count: 0,
 					agent_id: opts.agentId,
+					scope: resolvedScope,
 					content: params.content,
 					content_hash: hash,
 					created_at: now,
@@ -124,7 +130,9 @@ export function createStoreMemoryTool(opts: StoreMemoryToolOptions): AgentTool<t
 				// TOCTOU: another call inserted the same content between our hash check
 				// and this insert (the await embed() yields the event loop). Fall back to strengthen.
 				if (isSqliteConstraintUnique(err)) {
-					const race = opts.stmts.getMemoryByHash.get(opts.agentId, hash) as Chunk | undefined;
+					const race = opts.stmts.getMemoryByHashAndScope.get(opts.agentId, resolvedScope, hash) as
+						| Chunk
+						| undefined;
 					if (race) {
 						const newIntensity = updatedIntensity(
 							race.running_intensity,

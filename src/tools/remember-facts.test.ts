@@ -40,6 +40,7 @@ function insertFact(stmts: DbStatements, content: string, embedding: Float32Arra
 	stmts.insertChunk.run({
 		access_count: 0,
 		agent_id: AGENT_ID,
+		scope: "",
 		content,
 		content_hash: null,
 		created_at: now,
@@ -321,6 +322,7 @@ describe("remember_facts", () => {
 		stmts.insertChunk.run({
 			access_count: 0,
 			agent_id: otherAgentId,
+			scope: "",
 			content: "Other agent's fact",
 			content_hash: null,
 			created_at: now,

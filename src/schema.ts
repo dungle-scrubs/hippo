@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS hippo_meta (
 CREATE TABLE IF NOT EXISTS chunks (
     id                TEXT PRIMARY KEY,
     agent_id          TEXT NOT NULL,
+    scope             TEXT NOT NULL DEFAULT '',
     content           TEXT NOT NULL,
     content_hash      TEXT,
     embedding         BLOB NOT NULL,
@@ -24,10 +25,11 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE TABLE IF NOT EXISTS memory_blocks (
     agent_id    TEXT NOT NULL,
+    scope       TEXT NOT NULL DEFAULT '',
     key         TEXT NOT NULL,
     value       TEXT NOT NULL,
     updated_at  TEXT NOT NULL,
-    PRIMARY KEY (agent_id, key)
+    PRIMARY KEY (agent_id, scope, key)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_memory_dedup
@@ -46,6 +48,69 @@ CREATE INDEX IF NOT EXISTS idx_chunks_created_at
     ON chunks(agent_id, created_at);
 `;
 
+/** Returns true when a table already has the requested column. */
+function hasColumn(db: Database, table: string, column: string): boolean {
+	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<
+		{ name?: string } | Record<string, unknown>
+	>;
+	for (const row of rows) {
+		if ((row as { name?: string }).name === column) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Adds the chunks.scope column when upgrading from pre-scope schema. */
+function migrateChunksScope(db: Database): void {
+	if (!hasColumn(db, "chunks", "scope")) {
+		db.exec("ALTER TABLE chunks ADD COLUMN scope TEXT NOT NULL DEFAULT ''");
+	}
+	db.exec("UPDATE chunks SET scope = '' WHERE scope IS NULL");
+}
+
+/** Rebuilds memory_blocks with (agent_id, scope, key) primary key. */
+function migrateMemoryBlocksScope(db: Database): void {
+	if (!hasColumn(db, "memory_blocks", "scope")) {
+		db.transaction(() => {
+			db.exec(`
+				CREATE TABLE memory_blocks_v2 (
+					agent_id    TEXT NOT NULL,
+					scope       TEXT NOT NULL DEFAULT '',
+					key         TEXT NOT NULL,
+					value       TEXT NOT NULL,
+					updated_at  TEXT NOT NULL,
+					PRIMARY KEY (agent_id, scope, key)
+				)
+			`);
+			db.exec(`
+				INSERT INTO memory_blocks_v2 (agent_id, scope, key, value, updated_at)
+				SELECT agent_id, '', key, value, updated_at FROM memory_blocks
+			`);
+			db.exec("DROP TABLE memory_blocks");
+			db.exec("ALTER TABLE memory_blocks_v2 RENAME TO memory_blocks");
+		})();
+	}
+	db.exec("UPDATE memory_blocks SET scope = '' WHERE scope IS NULL");
+}
+
+/** Ensures scope-specific indexes exist after schema/migrations run. */
+function ensureScopeIndexes(db: Database): void {
+	db.exec("DROP INDEX IF EXISTS idx_chunks_memory_dedup");
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_memory_dedup
+		ON chunks(agent_id, scope, content_hash) WHERE kind = 'memory'
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_chunks_scope
+		ON chunks(agent_id, scope)
+	`);
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_memory_blocks_scope
+		ON memory_blocks(agent_id, scope, updated_at)
+	`);
+}
+
 /**
  * Apply WAL mode, busy timeout, and create tables/indexes.
  *
@@ -55,6 +120,9 @@ export function initSchema(db: Database): void {
 	db.pragma("journal_mode=WAL");
 	db.pragma("busy_timeout=5000");
 	db.exec(SCHEMA_SQL);
+	migrateChunksScope(db);
+	migrateMemoryBlocksScope(db);
+	ensureScopeIndexes(db);
 }
 
 /**

@@ -3,7 +3,7 @@ import { Type } from "@mariozechner/pi-ai";
 import type { Database } from "better-sqlite3";
 import { type DbStatements, getAllActiveChunks } from "../db.js";
 import { chunkEmbedding, cosineSimilarity } from "../similarity.js";
-import type { Chunk, EmbedFn } from "../types.js";
+import type { Chunk, EmbedFn, ScopeFilter } from "../types.js";
 
 /** Default minimum similarity threshold for a chunk to be considered a match for deletion. */
 const DEFAULT_FORGET_THRESHOLD = 0.7;
@@ -26,6 +26,8 @@ export interface ForgetMemoryToolOptions {
 	readonly forgetThreshold?: number;
 	/** Max chunks to load for brute-force search (default: 10,000). */
 	readonly maxSearchChunks?: number;
+	/** Optional scope filter used while finding deletable chunks. */
+	readonly scope?: ScopeFilter;
 	readonly stmts: DbStatements;
 }
 
@@ -47,7 +49,7 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 	// only the directly superseded chunk references the superseder.
 	const deleteMatches = opts.db.transaction((matches: Array<{ chunk: Chunk }>) => {
 		for (const { chunk } of matches) {
-			opts.stmts.clearSupersededBy.run(chunk.id, opts.agentId);
+			opts.stmts.clearSupersededByScoped.run(chunk.id, opts.agentId, chunk.scope);
 			opts.stmts.deleteChunk.run(chunk.id);
 		}
 	});
@@ -60,7 +62,7 @@ export function createForgetMemoryTool(opts: ForgetMemoryToolOptions): AgentTool
 
 			const maxChunks = opts.maxSearchChunks ?? DEFAULT_MAX_SEARCH_CHUNKS;
 			const threshold = opts.forgetThreshold ?? DEFAULT_FORGET_THRESHOLD;
-			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId, maxChunks);
+			const allChunks = getAllActiveChunks(opts.stmts, opts.agentId, maxChunks, opts.scope);
 
 			// Find matching chunks above threshold
 			const matches: Array<{ chunk: Chunk; similarity: number }> = [];

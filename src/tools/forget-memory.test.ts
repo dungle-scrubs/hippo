@@ -22,6 +22,7 @@ function insertChunk(
 	stmts.insertChunk.run({
 		access_count: 0,
 		agent_id: AGENT_ID,
+		scope: "",
 		content,
 		content_hash: null,
 		created_at: now,
@@ -265,6 +266,7 @@ describe("forget_memory", () => {
 		stmts.insertChunk.run({
 			access_count: 0,
 			agent_id: AGENT_ID,
+			scope: "",
 			content: "Agent A old fact",
 			content_hash: null,
 			created_at: now,
@@ -279,6 +281,7 @@ describe("forget_memory", () => {
 		stmts.insertChunk.run({
 			access_count: 0,
 			agent_id: AGENT_ID,
+			scope: "",
 			content: "Agent A new fact",
 			content_hash: null,
 			created_at: now,
@@ -298,6 +301,7 @@ describe("forget_memory", () => {
 		stmts.insertChunk.run({
 			access_count: 0,
 			agent_id: OTHER_AGENT,
+			scope: "",
 			content: "Agent B fact",
 			content_hash: null,
 			created_at: now,

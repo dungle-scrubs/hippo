@@ -39,6 +39,7 @@ export interface Chunk {
 	readonly metadata: string | null;
 	readonly encounter_count: number;
 	readonly running_intensity: number;
+	readonly scope: string;
 	readonly superseded_by: string | null;
 }
 
@@ -46,6 +47,7 @@ export interface Chunk {
 export interface MemoryBlock {
 	readonly agent_id: string;
 	readonly key: string;
+	readonly scope: string;
 	readonly updated_at: string;
 	readonly value: string;
 }
@@ -65,6 +67,9 @@ export interface SearchResult {
 	readonly score: number;
 }
 
+/** Optional scope filter for chunk queries. */
+export type ScopeFilter = string | readonly string[];
+
 /** Options for creating hippo tools. */
 export interface HippoOptions {
 	readonly agentId: string;
@@ -72,6 +77,10 @@ export interface HippoOptions {
 	readonly embed: EmbedFn;
 	readonly llm: LlmClient;
 	readonly messagesTable?: string;
+	/** Optional default scope for writes and memory block operations. */
+	readonly scope?: string;
+	/** Optional recall scope filter (single scope or list). Defaults to [scope] when scope is set. */
+	readonly recallScopes?: ScopeFilter;
 }
 
 /** Result summary returned by remember_facts. */

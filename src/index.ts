@@ -27,18 +27,19 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 	initSchema(opts.db);
 	const stmts = prepareStatements(opts.db);
 
-	const common = { agentId: opts.agentId, stmts };
+	const common = { agentId: opts.agentId, scope: opts.scope, stmts };
 	const withEmbed = { ...common, embed: opts.embed };
+	const recallScope = opts.recallScopes ?? (opts.scope !== undefined ? [opts.scope] : undefined);
 
 	// biome-ignore lint/suspicious/noExplicitAny: AgentTool generics don't unify across different parameter schemas
 	const tools: AgentTool<any>[] = [
 		createRememberFactsTool({ ...withEmbed, db: opts.db, llm: opts.llm }),
 		createStoreMemoryTool(withEmbed),
-		createRecallMemoriesTool(withEmbed),
+		createRecallMemoriesTool({ ...withEmbed, scope: recallScope }),
 		createRecallMemoryBlockTool(common),
 		createReplaceMemoryBlockTool(common),
 		createAppendMemoryBlockTool(common),
-		createForgetMemoryTool({ ...withEmbed, db: opts.db }),
+		createForgetMemoryTool({ ...withEmbed, db: opts.db, scope: recallScope }),
 	];
 
 	if (opts.messagesTable) {
@@ -53,6 +54,7 @@ export function createHippoTools(opts: HippoOptions): AgentTool<any>[] {
 	return tools;
 }
 
+export { deleteChunk, updateChunk } from "./chunk-mutations.js";
 export type { EmbeddingProviderConfig } from "./providers/embedding.js";
 export { createEmbeddingProvider } from "./providers/embedding.js";
 export type { LlmProviderConfig } from "./providers/llm.js";
@@ -68,5 +70,6 @@ export type {
 	MemoryBlock,
 	RememberFactAction,
 	RememberFactsResult,
+	ScopeFilter,
 	SearchResult,
 } from "./types.js";

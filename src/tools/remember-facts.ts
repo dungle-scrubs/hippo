@@ -1,7 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 import type { Database } from "better-sqlite3";
-import { type DbStatements, getActiveChunks } from "../db.js";
+import { type DbStatements, getActiveChunks, normalizeScope } from "../db.js";
 import { classifyConflict, extractFacts } from "../extractor.js";
 import { chunkEmbedding, cosineSimilarity, embeddingToBuffer } from "../similarity.js";
 import { updatedIntensity } from "../strength.js";
@@ -41,6 +41,8 @@ export interface RememberFactsToolOptions {
 	readonly llm: LlmClient;
 	/** Max existing facts to load for conflict resolution (default: 10,000). */
 	readonly maxSearchFacts?: number;
+	/** Optional scope used for reads/writes (empty string = global). */
+	readonly scope?: string;
 	/** Max input text length in characters (default: 10,000). */
 	readonly maxTextLength?: number;
 	readonly stmts: DbStatements;
@@ -59,6 +61,7 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 		description:
 			"Extract discrete facts from text, rate their intensity, check for conflicts with existing knowledge, and store. Handles duplicates, supersession, and new facts.",
 		execute: async (_toolCallId, params, signal) => {
+			const resolvedScope = normalizeScope(opts.scope);
 			const maxLen = opts.maxTextLength ?? MAX_TEXT_LENGTH;
 			if (params.text.length > maxLen) {
 				throw new Error(
@@ -86,10 +89,23 @@ export function createRememberFactsTool(opts: RememberFactsToolOptions): AgentTo
 			// Load facts once — processFact maintains this array across iterations
 			// for intra-batch visibility (e.g., dedup between extracted facts).
 			const maxFacts = opts.maxSearchFacts ?? DEFAULT_MAX_SEARCH_FACTS;
-			const existingFacts = getActiveChunks(opts.stmts, opts.agentId, "fact", maxFacts);
+			const existingFacts = getActiveChunks(
+				opts.stmts,
+				opts.agentId,
+				"fact",
+				maxFacts,
+				resolvedScope,
+			);
 
 			for (const { fact, intensity } of extracted) {
-				const action = await processFact(fact, intensity, existingFacts, opts, signal);
+				const action = await processFact(
+					fact,
+					intensity,
+					existingFacts,
+					opts,
+					resolvedScope,
+					signal,
+				);
 				actions.push(action);
 			}
 
@@ -140,6 +156,7 @@ async function processFact(
 	intensity: number,
 	existingFacts: Chunk[],
 	opts: RememberFactsToolOptions,
+	scope: string,
 	signal?: AbortSignal,
 ): Promise<RememberFactAction> {
 	const now = new Date().toISOString();
@@ -156,6 +173,7 @@ async function processFact(
 		const chunk: Chunk = {
 			access_count: 0,
 			agent_id: opts.agentId,
+			scope,
 			content: fact,
 			content_hash: null,
 			created_at: now,
@@ -221,6 +239,7 @@ async function processFact(
 			const chunk: Chunk = {
 				access_count: 0,
 				agent_id: opts.agentId,
+				scope,
 				content: fact,
 				content_hash: null,
 				created_at: now,
@@ -257,6 +276,7 @@ async function processFact(
 			const chunk: Chunk = {
 				access_count: 0,
 				agent_id: opts.agentId,
+				scope,
 				content: fact,
 				content_hash: null,
 				created_at: now,

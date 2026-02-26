@@ -330,16 +330,25 @@ Memory blocks are not touched by `forget_memory` — use
 
 ```typescript
 interface HippoOptions {
-  db: Database;           // better-sqlite3 handle
-  agentId: string;        // namespace for multi-agent isolation
-  embed: EmbedFn;         // (text, signal?) => Float32Array
-  llm: LlmClient;        // { complete(messages, systemPrompt, signal?) }
-  messagesTable?: string; // enables recall_conversation
+  db: Database;                           // better-sqlite3 handle
+  agentId: string;                        // namespace for multi-agent isolation
+  embed: EmbedFn;                         // (text, signal?) => Float32Array
+  llm: LlmClient;                         // { complete(messages, systemPrompt, signal?) }
+  messagesTable?: string;                 // enables recall_conversation
+  scope?: string;                         // default write scope (optional)
+  recallScopes?: string | readonly string[]; // optional recall filter
 }
 ```
 
 **`agentId`** — all chunks and blocks are scoped to this ID.
 Multiple agents can share one database without interference.
+
+**`scope`** — optional default scope for writes (`remember_facts`,
+`store_memory`, and memory block tools). Omit to write globally.
+
+**`recallScopes`** — optional scope filter for recall operations
+(`recall_memories`, `forget_memory`). Accepts one scope or many.
+When omitted, recall behavior is unchanged (searches all scopes).
 
 **`embed`** — you provide the embedding function. Hippo stores
 the resulting `Float32Array` as a BLOB and does brute-force
@@ -411,6 +420,23 @@ Brute-force cosine similarity is viable up to ~10k chunks per
 agent. Beyond that, pre-filter by recency or tags. Past 50k,
 consider migrating to sqlite-vec.
 
+## Dashboard chunk mutations
+
+These are library helpers for building edit/delete APIs outside the
+agent tool interface:
+
+```typescript
+import { deleteChunk, updateChunk } from "@dungle-scrubs/hippo";
+
+const updated = await updateChunk(db, embed, chunkId, "new content");
+const deleted = deleteChunk(db, chunkId);
+```
+
+- `updateChunk` re-embeds content and updates chunk fields in a
+  single transaction.
+- `deleteChunk` hard-deletes a chunk and clears supersession
+  references that pointed to it.
+
 ## Exports
 
 The library exports both the tool factory and all building blocks:
@@ -423,6 +449,9 @@ export { createHippoTools } from "@dungle-scrubs/hippo";
 export { createEmbeddingProvider } from "@dungle-scrubs/hippo";
 export { createLlmProvider } from "@dungle-scrubs/hippo";
 
+// Chunk mutation helpers
+export { deleteChunk, updateChunk } from "@dungle-scrubs/hippo";
+
 // Schema utilities
 export { initSchema, verifyEmbeddingModel } from "@dungle-scrubs/hippo";
 
@@ -430,7 +459,7 @@ export { initSchema, verifyEmbeddingModel } from "@dungle-scrubs/hippo";
 export type {
   Chunk, ChunkKind, EmbedFn, HippoOptions,
   LlmClient, MemoryBlock, RememberFactAction,
-  RememberFactsResult, SearchResult,
+  RememberFactsResult, ScopeFilter, SearchResult,
   EmbeddingProviderConfig, LlmProviderConfig,
 } from "@dungle-scrubs/hippo";
 ```
@@ -442,7 +471,7 @@ pnpm install
 just ci          # build + check + test
 
 just build       # tsc → dist/
-just test        # vitest run (199 tests)
+just test        # vitest run (209 tests)
 just test-watch  # vitest watch mode
 just typecheck   # tsc --noEmit
 just check       # biome lint + format
