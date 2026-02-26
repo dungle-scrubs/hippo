@@ -46,7 +46,7 @@ const llm: LlmClient = createLlmProvider(config.llm);
 
 const mcp = new McpServer({
 	name: "hippo",
-	version: "0.2.1", // x-release-please-version
+	version: "0.2.2", // x-release-please-version
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────
