@@ -33,6 +33,9 @@ import { createStoreMemoryTool } from "../tools/store-memory.js";
 import type { EmbedFn, LlmClient } from "../types.js";
 import { resolveConfig } from "./config.js";
 
+/** Maximum request body size in bytes (1MB). */
+const MAX_REQUEST_BODY_BYTES = 1_048_576;
+
 // ── Setup ────────────────────────────────────────────────────────────
 
 const config = resolveConfig();
@@ -88,14 +91,16 @@ mcp.tool(
 	"Extract discrete facts from text, rate their intensity, check for conflicts with existing knowledge, and store. Handles duplicates, supersession, and new facts.",
 	{
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
+		scope: z.string().optional().describe("Scope for write isolation (default: global)"),
 		text: z.string().max(10_000).describe("Text containing facts to extract and remember"),
 	},
-	async ({ agent_id, text }, extra) => {
+	async ({ agent_id, scope, text }, extra) => {
 		const tool = createRememberFactsTool({
 			agentId: agent_id,
 			db,
 			embed,
 			llm,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { text }, extra.signal);
@@ -112,11 +117,13 @@ mcp.tool(
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
 		content: z.string().max(50_000).describe("Content to store as a memory"),
 		metadata: z.string().optional().describe("Optional JSON metadata"),
+		scope: z.string().optional().describe("Scope for write isolation (default: global)"),
 	},
-	async ({ agent_id, content, metadata }, extra) => {
+	async ({ agent_id, content, metadata, scope }, extra) => {
 		const tool = createStoreMemoryTool({
 			agentId: agent_id,
 			embed,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { content, metadata }, extra.signal);
@@ -134,11 +141,13 @@ mcp.tool(
 		kind: z.enum(["fact", "memory"]).optional().describe("Filter by chunk kind (default: all)"),
 		limit: z.number().min(1).max(50).default(10).describe("Max results to return"),
 		query: z.string().describe("What to search for in memory"),
+		scope: z.string().optional().describe("Scope filter for recall (default: all scopes)"),
 	},
-	async ({ agent_id, kind, limit, query }, extra) => {
+	async ({ agent_id, kind, limit, query, scope }, extra) => {
 		const tool = createRecallMemoriesTool({
 			agentId: agent_id,
 			embed,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { kind, limit, query }, extra.signal);
@@ -154,14 +163,16 @@ mcp.tool(
 	{
 		agent_id: z.string().describe("Agent namespace for memory isolation"),
 		description: z.string().describe("Description of what to forget"),
+		scope: z.string().optional().describe("Scope filter for deletion (default: all scopes)"),
 		threshold: z.number().min(0).max(1).default(0.7).describe("Minimum similarity to delete"),
 	},
-	async ({ agent_id, description, threshold }, extra) => {
+	async ({ agent_id, description, scope, threshold }, extra) => {
 		const tool = createForgetMemoryTool({
 			agentId: agent_id,
 			db,
 			embed,
 			forgetThreshold: threshold,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { description }, extra.signal);
@@ -177,10 +188,12 @@ mcp.tool(
 	{
 		agent_id: z.string().describe("Agent namespace"),
 		key: z.string().describe("Block key (e.g. persona, objectives)"),
+		scope: z.string().optional().describe("Block scope (default: global)"),
 	},
-	async ({ agent_id, key }) => {
+	async ({ agent_id, key, scope }) => {
 		const tool = createRecallMemoryBlockTool({
 			agentId: agent_id,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { key });
@@ -198,10 +211,12 @@ mcp.tool(
 		key: z.string().describe("Block key"),
 		new_text: z.string().describe("Replacement text"),
 		old_text: z.string().min(1).describe("Text to find"),
+		scope: z.string().optional().describe("Block scope (default: global)"),
 	},
-	async ({ agent_id, key, new_text, old_text }) => {
+	async ({ agent_id, key, new_text, old_text, scope }) => {
 		const tool = createReplaceMemoryBlockTool({
 			agentId: agent_id,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { key, newText: new_text, oldText: old_text });
@@ -218,10 +233,12 @@ mcp.tool(
 		agent_id: z.string().describe("Agent namespace"),
 		content: z.string().describe("Text to append"),
 		key: z.string().describe("Block key"),
+		scope: z.string().optional().describe("Block scope (default: global)"),
 	},
-	async ({ agent_id, content, key }) => {
+	async ({ agent_id, content, key, scope }) => {
 		const tool = createAppendMemoryBlockTool({
 			agentId: agent_id,
+			scope,
 			stmts,
 		});
 		const result = await tool.execute("mcp", { content, key });
@@ -235,6 +252,15 @@ if (config.transport === "stdio") {
 	const transport = new StdioServerTransport();
 	await mcp.connect(transport);
 	console.error("Hippo MCP server running on stdio");
+
+	process.on("SIGTERM", () => {
+		db.close();
+		process.exit(0);
+	});
+	process.on("SIGINT", () => {
+		db.close();
+		process.exit(0);
+	});
 } else {
 	const transports = new Map<string, SSEServerTransport>();
 
@@ -261,6 +287,13 @@ if (config.transport === "stdio") {
 
 		// Message endpoint — client POSTs to this
 		if (url.pathname === "/messages" && req.method === "POST") {
+			const contentLength = Number.parseInt(req.headers["content-length"] ?? "0", 10);
+			if (contentLength > MAX_REQUEST_BODY_BYTES) {
+				res.writeHead(413, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ error: "Request body too large" }));
+				return;
+			}
+
 			const sessionId = url.searchParams.get("sessionId");
 			if (!sessionId || !transports.has(sessionId)) {
 				res.writeHead(400, { "Content-Type": "application/json" });
@@ -283,4 +316,30 @@ if (config.transport === "stdio") {
 		console.error(`  Messages:     POST /messages?sessionId=<id>`);
 		console.error(`  Health:       GET  /health`);
 	});
+
+	/**
+	 * Graceful shutdown — close all SSE transports, stop accepting
+	 * connections, and close the SQLite database handle.
+	 */
+	function shutdown(signal: string): void {
+		console.error(`\n${signal} received, shutting down...`);
+		for (const transport of transports.values()) {
+			transport.close();
+		}
+		transports.clear();
+		httpServer.close(() => {
+			db.close();
+			console.error("Hippo MCP server stopped.");
+			process.exit(0);
+		});
+		// Force exit after 5s if connections don't drain
+		setTimeout(() => {
+			console.error("Forced shutdown after timeout.");
+			db.close();
+			process.exit(1);
+		}, 5_000).unref();
+	}
+
+	process.on("SIGTERM", () => shutdown("SIGTERM"));
+	process.on("SIGINT", () => shutdown("SIGINT"));
 }

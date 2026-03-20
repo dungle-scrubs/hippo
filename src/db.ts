@@ -4,16 +4,13 @@ import type { Chunk, ScopeFilter } from "./types.js";
 /** Prepared statement cache, lazily built per database handle. */
 export interface DbStatements {
 	readonly db: Database;
-	readonly clearSupersededBy: Statement;
 	readonly clearSupersededByScoped: Statement;
 	readonly deleteChunk: Statement;
 	readonly getAllActiveChunksByAgent: Statement;
 	readonly getAllActiveChunksByAgentAndScope: Statement;
 	readonly getActiveChunksByAgent: Statement;
 	readonly getActiveChunksByAgentAndScope: Statement;
-	readonly getBlockByKey: Statement;
 	readonly getBlockByKeyAndScope: Statement;
-	readonly getMemoryByHash: Statement;
 	readonly getMemoryByHashAndScope: Statement;
 	readonly insertChunk: Statement;
 	readonly reinforceChunk: Statement;
@@ -49,9 +46,6 @@ function normalizeScopeFilter(filter?: ScopeFilter): readonly string[] | undefin
 export function prepareStatements(db: Database): DbStatements {
 	return {
 		db,
-		clearSupersededBy: db.prepare(
-			"UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ? AND agent_id = ?",
-		),
 		clearSupersededByScoped: db.prepare(
 			"UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ? AND agent_id = ? AND scope = ?",
 		),
@@ -80,14 +74,8 @@ export function prepareStatements(db: Database): DbStatements {
 			ORDER BY last_accessed_at DESC
 			LIMIT ?
 		`),
-		getBlockByKey: db.prepare(
-			"SELECT * FROM memory_blocks WHERE agent_id = ? AND scope = '' AND key = ?",
-		),
 		getBlockByKeyAndScope: db.prepare(
 			"SELECT * FROM memory_blocks WHERE agent_id = ? AND scope = ? AND key = ?",
-		),
-		getMemoryByHash: db.prepare(
-			"SELECT * FROM chunks WHERE agent_id = ? AND content_hash = ? AND kind = 'memory' AND superseded_by IS NULL",
 		),
 		getMemoryByHashAndScope: db.prepare(
 			"SELECT * FROM chunks WHERE agent_id = ? AND scope = ? AND content_hash = ? AND kind = 'memory' AND superseded_by IS NULL",

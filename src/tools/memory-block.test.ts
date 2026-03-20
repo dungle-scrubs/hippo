@@ -74,7 +74,7 @@ describe("memory block tools", () => {
 
 			expect(result.details.action).toBe("created");
 
-			const row = stmts.getBlockByKey.get(AGENT_ID, "objectives") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "objectives") as MemoryBlock;
 			expect(row.value).toBe("First line");
 		});
 
@@ -90,7 +90,7 @@ describe("memory block tools", () => {
 			const tool = createAppendMemoryBlockTool({ agentId: AGENT_ID, stmts });
 			await tool.execute("tc1", { content: "Appended", key: "objectives" });
 
-			const row = stmts.getBlockByKey.get(AGENT_ID, "objectives") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "objectives") as MemoryBlock;
 			expect(row.updated_at > "2020-01-01T00:00:00.000Z").toBe(true);
 		});
 
@@ -106,7 +106,7 @@ describe("memory block tools", () => {
 			const tool = createAppendMemoryBlockTool({ agentId: AGENT_ID, stmts });
 			await tool.execute("tc1", { content: "Second line", key: "objectives" });
 
-			const row = stmts.getBlockByKey.get(AGENT_ID, "objectives") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "objectives") as MemoryBlock;
 			expect(row.value).toBe("First line\nSecond line");
 		});
 	});
@@ -158,7 +158,7 @@ describe("memory block tools", () => {
 				oldText: "cats",
 			});
 
-			const row = stmts.getBlockByKey.get(AGENT_ID, "persona") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "persona") as MemoryBlock;
 			expect(row.value).toBe("A helpful assistant who likes dogs");
 		});
 
@@ -174,7 +174,7 @@ describe("memory block tools", () => {
 			const tool = createReplaceMemoryBlockTool({ agentId: AGENT_ID, stmts });
 			await tool.execute("tc1", { key: "notes", newText: "b", oldText: "aa" });
 
-			const row = stmts.getBlockByKey.get(AGENT_ID, "notes") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "notes") as MemoryBlock;
 			// replaceAll("aa", "b") on "aaa" → "ba" (non-overlapping left-to-right)
 			expect(row.value).toBe("ba");
 		});
@@ -198,7 +198,7 @@ describe("memory block tools", () => {
 			expect(result.details.error).toBe("empty_old_text");
 
 			// Block should be unchanged
-			const row = stmts.getBlockByKey.get(AGENT_ID, "persona") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "persona") as MemoryBlock;
 			expect(row.value).toBe("A helpful assistant");
 		});
 
@@ -218,7 +218,7 @@ describe("memory block tools", () => {
 				oldText: "foo",
 			});
 
-			const row = stmts.getBlockByKey.get(AGENT_ID, "notes") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get(AGENT_ID, "", "notes") as MemoryBlock;
 			expect(row.value).toBe("qux bar qux baz qux");
 			expect(result.details.replacements).toBe(3);
 		});
@@ -243,7 +243,7 @@ describe("memory block tools", () => {
 			expect(result.details.error).toBe("block_not_found");
 
 			// Other agent's block should be unchanged
-			const row = stmts.getBlockByKey.get("other-agent", "persona") as MemoryBlock;
+			const row = stmts.getBlockByKeyAndScope.get("other-agent", "", "persona") as MemoryBlock;
 			expect(row.value).toBe("Other agent likes cats");
 		});
 	});

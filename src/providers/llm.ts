@@ -107,7 +107,13 @@ export function createLlmProvider(config: LlmProviderConfig): LlmClient {
 			}
 
 			const json = (await response.json()) as ChatCompletionResponse;
-			return json.choices[0].message.content;
+			const choice = json.choices?.[0];
+			if (!choice?.message) {
+				throw new Error(
+					`LLM API returned no choices (model: ${config.model}, messages: ${chatMessages.length})`,
+				);
+			}
+			return choice.message.content;
 		},
 	};
 }

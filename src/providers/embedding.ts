@@ -61,6 +61,12 @@ export function createEmbeddingProvider(config: EmbeddingProviderConfig): EmbedF
 		}
 
 		const json = (await response.json()) as EmbeddingResponse;
-		return new Float32Array(json.data[0].embedding);
+		const entry = json.data?.[0];
+		if (!entry?.embedding) {
+			throw new Error(
+				`Embedding API returned no data (model: ${config.model}, input length: ${text.length})`,
+			);
+		}
+		return new Float32Array(entry.embedding);
 	};
 }

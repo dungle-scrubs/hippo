@@ -8,7 +8,8 @@ import { initSchema } from "./schema.js";
 import { embeddingToBuffer } from "./similarity.js";
 import { ulid } from "./ulid.js";
 
-const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
+const CLI = join(import.meta.dirname, "cli.ts");
+const TSX = join(import.meta.dirname, "..", "node_modules", ".bin", "tsx");
 const AGENT = "test-agent";
 
 /**
@@ -18,7 +19,7 @@ const AGENT = "test-agent";
  * @returns stdout as string
  */
 function hippo(...args: string[]): string {
-	return execFileSync("node", [CLI, ...args], {
+	return execFileSync(TSX, [CLI, ...args], {
 		encoding: "utf-8",
 		timeout: 10_000,
 	}).trim();
@@ -32,7 +33,7 @@ function hippo(...args: string[]): string {
  */
 function hippoFail(...args: string[]): string {
 	try {
-		execFileSync("node", [CLI, ...args], {
+		execFileSync(TSX, [CLI, ...args], {
 			encoding: "utf-8",
 			timeout: 10_000,
 		});
@@ -132,10 +133,16 @@ describe("hippo CLI", () => {
 		});
 		db.prepare("UPDATE chunks SET superseded_by = ? WHERE id = ?").run(supersederId, supersededId);
 
-		// Insert a block
+		// Insert blocks — global scope and a project scope
 		db.prepare(
-			"INSERT INTO memory_blocks (agent_id, key, value, updated_at) VALUES (?, ?, ?, ?)",
-		).run(AGENT, "persona", "A helpful coding assistant", now);
+			"INSERT INTO memory_blocks (agent_id, scope, key, value, updated_at) VALUES (?, ?, ?, ?, ?)",
+		).run(AGENT, "", "persona", "A helpful coding assistant", now);
+		db.prepare(
+			"INSERT INTO memory_blocks (agent_id, scope, key, value, updated_at) VALUES (?, ?, ?, ?, ?)",
+		).run(AGENT, "project-a", "persona", "A project-specific persona", now);
+		db.prepare(
+			"INSERT INTO memory_blocks (agent_id, scope, key, value, updated_at) VALUES (?, ?, ?, ?, ?)",
+		).run(AGENT, "project-a", "objectives", "Ship the feature", now);
 
 		db.close();
 	});
@@ -195,7 +202,7 @@ describe("hippo CLI", () => {
 		expect(data.chunks.facts).toBe(3);
 		expect(data.chunks.memories).toBe(1);
 		expect(data.chunks.superseded).toBe(1);
-		expect(data.blocks).toBe(1);
+		expect(data.blocks).toBe(3);
 		expect(data.fileSizeBytes).toBeGreaterThan(0);
 	});
 
@@ -261,26 +268,38 @@ describe("hippo CLI", () => {
 		expect(out).toContain("persona");
 	});
 
-	it("blocks --json returns structured data", () => {
+	it("blocks --json returns structured data with scope", () => {
 		const out = hippo("--db", dbPath, "blocks", AGENT, "--json");
 		const data = JSON.parse(out);
-		expect(data.length).toBe(1);
-		expect(data[0].key).toBe("persona");
+		expect(data.length).toBe(3);
+		expect(data[0].key).toBeTruthy();
 		expect(data[0].sizeBytes).toBeGreaterThan(0);
+		expect(data[0].scope).toBeDefined();
 	});
 
 	// ── block ──────────────────────────────────────────────────────
 
-	it("block returns block content", () => {
-		const out = hippo("--db", dbPath, "block", AGENT, "persona");
+	it("block returns block content with --scope", () => {
+		const out = hippo("--db", dbPath, "block", AGENT, "persona", "--scope", "");
 		expect(out).toBe("A helpful coding assistant");
 	});
 
-	it("block --json returns structured data", () => {
-		const out = hippo("--db", dbPath, "block", AGENT, "persona", "--json");
+	it("block errors on ambiguous scope", () => {
+		const err = hippoFail("--db", dbPath, "block", AGENT, "persona");
+		expect(err).toContain("multiple scopes");
+	});
+
+	it("block returns scoped block content", () => {
+		const out = hippo("--db", dbPath, "block", AGENT, "persona", "--scope", "project-a");
+		expect(out).toBe("A project-specific persona");
+	});
+
+	it("block --json returns structured data with scope", () => {
+		const out = hippo("--db", dbPath, "block", AGENT, "persona", "--scope", "", "--json");
 		const data = JSON.parse(out);
 		expect(data.value).toBe("A helpful coding assistant");
 		expect(data.key).toBe("persona");
+		expect(data.scope).toBe("");
 	});
 
 	it("block errors on missing key", () => {
@@ -340,14 +359,17 @@ describe("hippo CLI", () => {
 
 	// ── export / import ────────────────────────────────────────────
 
-	it("export produces valid JSON with all data", () => {
+	it("export produces valid JSON with all data including block scope", () => {
 		const out = hippo("--db", dbPath, "export", AGENT);
 		const data = JSON.parse(out);
 		expect(data.agentId).toBe(AGENT);
 		expect(data.version).toBe(1);
 		expect(data.chunks.length).toBe(4); // includes superseded
-		expect(data.blocks.length).toBe(1);
+		expect(data.blocks.length).toBe(3);
 		expect(data.chunks[0].embedding_base64).toBeTruthy();
+		// Block scope is exported
+		const scopes = data.blocks.map((b: { scope: string }) => b.scope).sort();
+		expect(scopes).toEqual(["", "project-a", "project-a"]);
 	});
 
 	it("export → import roundtrips data", () => {
@@ -362,12 +384,16 @@ describe("hippo CLI", () => {
 		const out = hippo("--db", newDb, "import", exportFile, "--json");
 		const result = JSON.parse(out);
 		expect(result.chunksImported).toBe(4);
-		expect(result.blocksImported).toBe(1);
+		expect(result.blocksImported).toBe(3);
 
 		// Verify data exists in new DB
 		const stats = JSON.parse(hippo("--db", newDb, "stats", "--json"));
 		expect(stats.chunks.total).toBe(4);
-		expect(stats.blocks).toBe(1);
+		expect(stats.blocks).toBe(3);
+
+		// Verify scoped block survived roundtrip
+		const block = hippo("--db", newDb, "block", AGENT, "persona", "--scope", "project-a");
+		expect(block).toBe("A project-specific persona");
 	});
 
 	it("import skips duplicates on re-import", () => {
@@ -380,6 +406,73 @@ describe("hippo CLI", () => {
 		const result = JSON.parse(out);
 		expect(result.chunksImported).toBe(0);
 		expect(result.chunksSkipped).toBe(4);
+	});
+
+	it("import rejects unsupported version", () => {
+		const exportFile = join(tmpDir, "bad-version.json");
+		writeFileSync(
+			exportFile,
+			JSON.stringify({ agentId: AGENT, blocks: [], chunks: [], version: 99 }),
+		);
+		const err = hippoFail("--db", dbPath, "import", exportFile);
+		expect(err).toContain("unsupported export version");
+	});
+
+	it("import rejects chunks with missing required fields", () => {
+		const exportFile = join(tmpDir, "bad-chunk.json");
+		writeFileSync(
+			exportFile,
+			JSON.stringify({
+				agentId: AGENT,
+				blocks: [],
+				chunks: [{ id: "x" }],
+				version: 1,
+			}),
+		);
+		const err = hippoFail("--db", dbPath, "import", exportFile);
+		expect(err).toContain("missing required fields");
+	});
+
+	it("import rejects chunks with invalid kind", () => {
+		const exportFile = join(tmpDir, "bad-kind.json");
+		writeFileSync(
+			exportFile,
+			JSON.stringify({
+				agentId: AGENT,
+				blocks: [],
+				chunks: [
+					{
+						id: "x",
+						content: "test",
+						kind: "invalid",
+						embedding_base64: "AAAA",
+						created_at: "2025-01-01",
+						last_accessed_at: "2025-01-01",
+						running_intensity: 0.5,
+						encounter_count: 1,
+						access_count: 0,
+					},
+				],
+				version: 1,
+			}),
+		);
+		const err = hippoFail("--db", dbPath, "import", exportFile);
+		expect(err).toContain("invalid kind");
+	});
+
+	// ── scope ──────────────────────────────────────────────────────
+
+	it("blocks --scope filters by scope", () => {
+		const out = hippo("--db", dbPath, "blocks", AGENT, "--scope", "project-a", "--json");
+		const data = JSON.parse(out);
+		expect(data.length).toBe(2);
+		expect(data.every((b: { scope: string }) => b.scope === "project-a")).toBe(true);
+	});
+
+	it("block returns unique key without --scope", () => {
+		// "objectives" only exists in one scope — no ambiguity
+		const out = hippo("--db", dbPath, "block", AGENT, "objectives");
+		expect(out).toBe("Ship the feature");
 	});
 
 	// ── error handling ─────────────────────────────────────────────

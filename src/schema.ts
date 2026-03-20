@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS memory_blocks (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_memory_dedup
-    ON chunks(agent_id, content_hash) WHERE kind = 'memory';
+    ON chunks(agent_id, scope, content_hash) WHERE kind = 'memory';
 
 CREATE INDEX IF NOT EXISTS idx_chunks_agent_kind
     ON chunks(agent_id, kind);
@@ -46,19 +46,30 @@ CREATE INDEX IF NOT EXISTS idx_chunks_superseded
 
 CREATE INDEX IF NOT EXISTS idx_chunks_created_at
     ON chunks(agent_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_scope
+    ON chunks(agent_id, scope);
+
+CREATE INDEX IF NOT EXISTS idx_memory_blocks_scope
+    ON memory_blocks(agent_id, scope, updated_at);
 `;
 
-/** Returns true when a table already has the requested column. */
+/**
+ * Returns true when a table already has the requested column.
+ *
+ * Uses an allowlist of known table names to prevent SQL injection
+ * through the PRAGMA interpolation (PRAGMA doesn't support parameters).
+ */
+const KNOWN_TABLES = new Set(["chunks", "memory_blocks"]);
+
 function hasColumn(db: Database, table: string, column: string): boolean {
-	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<
-		{ name?: string } | Record<string, unknown>
-	>;
-	for (const row of rows) {
-		if ((row as { name?: string }).name === column) {
-			return true;
-		}
+	if (!KNOWN_TABLES.has(table)) {
+		throw new Error(`hasColumn: unknown table "${table}"`);
 	}
-	return false;
+	const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+		name?: string;
+	}>;
+	return rows.some((row) => row.name === column);
 }
 
 /** Adds the chunks.scope column when upgrading from pre-scope schema. */
@@ -94,13 +105,28 @@ function migrateMemoryBlocksScope(db: Database): void {
 	db.exec("UPDATE memory_blocks SET scope = '' WHERE scope IS NULL");
 }
 
-/** Ensures scope-specific indexes exist after schema/migrations run. */
+/**
+ * Ensures scope-specific indexes exist after migrations run.
+ *
+ * For fresh databases, SCHEMA_SQL already creates these indexes. This
+ * handles upgrades from pre-scope schema where `idx_chunks_memory_dedup`
+ * was on `(agent_id, content_hash)` instead of `(agent_id, scope, content_hash)`.
+ */
 function ensureScopeIndexes(db: Database): void {
-	db.exec("DROP INDEX IF EXISTS idx_chunks_memory_dedup");
-	db.exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_memory_dedup
-		ON chunks(agent_id, scope, content_hash) WHERE kind = 'memory'
-	`);
+	// Rebuild dedup index only if it exists with the old column set (pre-scope).
+	// On fresh databases this is a no-op since the correct index already exists.
+	const indexInfo = db.prepare("PRAGMA index_info(idx_chunks_memory_dedup)").all() as Array<{
+		name: string;
+	}>;
+	const hasScope = indexInfo.some((col) => col.name === "scope");
+	if (!hasScope && indexInfo.length > 0) {
+		db.exec("DROP INDEX IF EXISTS idx_chunks_memory_dedup");
+		db.exec(`
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_memory_dedup
+			ON chunks(agent_id, scope, content_hash) WHERE kind = 'memory'
+		`);
+	}
+	// These are idempotent — safe on fresh and migrated databases.
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_chunks_scope
 		ON chunks(agent_id, scope)

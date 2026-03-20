@@ -155,4 +155,53 @@ describe("chunk mutations", () => {
 		const resurrected = db.prepare("SELECT * FROM chunks WHERE id = ?").get(oldFactId) as Chunk;
 		expect(resurrected.superseded_by).toBeNull();
 	});
+
+	it("deleteChunk scopes supersession clearance to agent and scope", () => {
+		const embedding = new Float32Array([1, 0, 0, 0]);
+
+		// Agent A, scope "proj-a": oldA superseded by newA
+		const oldA = insertChunk(stmts, {
+			content: "Agent A old",
+			embedding,
+			kind: "fact",
+			scope: "proj-a",
+		});
+		const newA = insertChunk(stmts, {
+			content: "Agent A new",
+			embedding,
+			kind: "fact",
+			scope: "proj-a",
+		});
+		stmts.supersedeChunk.run(newA, oldA);
+
+		// Different agent, different scope: oldB with superseded_by pointing to newA (simulated corruption)
+		const otherAgent = "other-agent";
+		const oldB = ulid();
+		const now = new Date().toISOString();
+		stmts.insertChunk.run({
+			access_count: 0,
+			agent_id: otherAgent,
+			scope: "proj-b",
+			content: "Other agent chunk",
+			content_hash: null,
+			created_at: now,
+			embedding: embeddingToBuffer(embedding),
+			encounter_count: 1,
+			id: oldB,
+			kind: "fact",
+			last_accessed_at: now,
+			metadata: null,
+			running_intensity: 0.5,
+		});
+		db.prepare("UPDATE chunks SET superseded_by = ? WHERE id = ?").run(newA, oldB);
+
+		// Delete newA — should only resurrect oldA (same agent+scope), NOT oldB
+		deleteChunk(db, newA);
+
+		const afterA = db.prepare("SELECT * FROM chunks WHERE id = ?").get(oldA) as Chunk;
+		expect(afterA.superseded_by).toBeNull();
+
+		const afterB = db.prepare("SELECT * FROM chunks WHERE id = ?").get(oldB) as Chunk;
+		expect(afterB.superseded_by).toBe(newA); // NOT resurrected — different agent/scope
+	});
 });
