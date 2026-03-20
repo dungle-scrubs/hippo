@@ -67,12 +67,27 @@ export function resolveConfig(): ServerConfig {
 	const transport = optional("HIPPO_TRANSPORT", "http") as "http" | "stdio";
 	const dimensionsStr = process.env.HIPPO_EMBED_DIMENSIONS;
 
+	const port = Number.parseInt(optional("HIPPO_PORT", "3100"), 10);
+	if (Number.isNaN(port) || port < 0 || port > 65535) {
+		throw new Error(`Invalid HIPPO_PORT: "${process.env.HIPPO_PORT}" (must be 0–65535)`);
+	}
+
+	let dimensions: number | undefined;
+	if (dimensionsStr) {
+		dimensions = Number.parseInt(dimensionsStr, 10);
+		if (Number.isNaN(dimensions) || dimensions < 1) {
+			throw new Error(
+				`Invalid HIPPO_EMBED_DIMENSIONS: "${dimensionsStr}" (must be a positive integer)`,
+			);
+		}
+	}
+
 	return {
 		db: required("HIPPO_DB"),
 		embedding: {
 			apiKey: required("HIPPO_EMBED_KEY"),
 			baseUrl: optional("HIPPO_EMBED_URL", "https://api.openai.com/v1"),
-			dimensions: dimensionsStr ? Number.parseInt(dimensionsStr, 10) : undefined,
+			dimensions,
 			model: optional("HIPPO_EMBED_MODEL", "text-embedding-3-small"),
 		},
 		llm: {
@@ -80,7 +95,7 @@ export function resolveConfig(): ServerConfig {
 			baseUrl: optional("HIPPO_LLM_URL", "https://openrouter.ai/api/v1"),
 			model: optional("HIPPO_LLM_MODEL", "google/gemini-flash-2.0"),
 		},
-		port: Number.parseInt(optional("HIPPO_PORT", "3100"), 10),
+		port,
 		transport,
 	};
 }
