@@ -26,6 +26,7 @@ interface ChunkRow {
 	readonly last_accessed_at: string;
 	readonly metadata: string | null;
 	readonly running_intensity: number;
+	readonly scope: string;
 	readonly superseded_by: string | null;
 }
 
@@ -403,8 +404,11 @@ program
 			const dbPath = resolveDbPath(program);
 			const db = openDb(dbPath);
 
-			let sql = "SELECT * FROM chunks WHERE content LIKE ? AND superseded_by IS NULL";
-			const params: unknown[] = [`%${text}%`];
+			// Escape LIKE wildcards so literal '%' and '_' in search text
+			// don't act as SQL wildcards. Uses '\' as escape char.
+			const escaped = text.replace(/[\\%_]/g, "\\$&");
+			let sql = "SELECT * FROM chunks WHERE content LIKE ? ESCAPE '\\' AND superseded_by IS NULL";
+			const params: unknown[] = [`%${escaped}%`];
 
 			if (opts.agent) {
 				sql += " AND agent_id = ?";
@@ -620,6 +624,7 @@ program
 				last_accessed_at: c.last_accessed_at,
 				metadata: c.metadata,
 				running_intensity: c.running_intensity,
+				scope: c.scope,
 				superseded_by: c.superseded_by,
 			})),
 			exportedAt: new Date().toISOString(),
@@ -643,6 +648,7 @@ interface ExportedChunk {
 	readonly last_accessed_at: string;
 	readonly metadata: string | null;
 	readonly running_intensity: number;
+	readonly scope?: string;
 	readonly superseded_by: string | null;
 }
 
@@ -690,9 +696,9 @@ program
 		initSchema(db);
 
 		const insertChunk = db.prepare(`
-			INSERT OR IGNORE INTO chunks (id, agent_id, content, content_hash, embedding, metadata,
+			INSERT OR IGNORE INTO chunks (id, agent_id, scope, content, content_hash, embedding, metadata,
 				kind, running_intensity, encounter_count, access_count, last_accessed_at, superseded_by, created_at)
-			VALUES (@id, @agent_id, @content, @content_hash, @embedding, @metadata,
+			VALUES (@id, @agent_id, @scope, @content, @content_hash, @embedding, @metadata,
 				@kind, @running_intensity, @encounter_count, @access_count, @last_accessed_at, @superseded_by, @created_at)
 		`);
 
@@ -719,6 +725,7 @@ program
 					last_accessed_at: c.last_accessed_at,
 					metadata: c.metadata,
 					running_intensity: c.running_intensity,
+					scope: c.scope ?? "",
 					superseded_by: c.superseded_by,
 				});
 				if (result.changes > 0) chunksInserted++;
