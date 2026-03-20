@@ -33,6 +33,7 @@ interface ChunkRow {
 interface BlockRow {
 	readonly agent_id: string;
 	readonly key: string;
+	readonly scope: string;
 	readonly updated_at: string;
 	readonly value: string;
 }
@@ -316,18 +317,26 @@ program
 	.command("blocks")
 	.argument("<agent>", "Agent ID to list blocks for")
 	.description("List all memory blocks (key-value text buffers) for an agent.")
+	.option("--scope <scope>", "Filter by scope")
 	.option("--json", "Output as JSON")
-	.action((agent: string, opts: { json?: boolean }) => {
+	.action((agent: string, opts: { json?: boolean; scope?: string }) => {
 		const dbPath = resolveDbPath(program);
 		const db = openDb(dbPath);
 
-		const rows = db
-			.prepare("SELECT * FROM memory_blocks WHERE agent_id = ? ORDER BY key")
-			.all(agent) as BlockRow[];
+		let sql = "SELECT * FROM memory_blocks WHERE agent_id = ?";
+		const params: unknown[] = [agent];
+		if (opts.scope !== undefined) {
+			sql += " AND scope = ?";
+			params.push(opts.scope);
+		}
+		sql += " ORDER BY scope, key";
+
+		const rows = db.prepare(sql).all(...params) as BlockRow[];
 		db.close();
 
 		const data = rows.map((r) => ({
 			key: r.key,
+			scope: r.scope,
 			sizeBytes: new TextEncoder().encode(r.value).byteLength,
 			updatedAt: r.updated_at,
 		}));
@@ -335,7 +344,10 @@ program
 		output(data, opts.json ?? false, (d) => {
 			if (d.length === 0) return "No blocks found.";
 			return d
-				.map((b) => `${b.key} (${(b.sizeBytes / 1024).toFixed(1)} KB, updated ${b.updatedAt})`)
+				.map((b) => {
+					const scopeTag = b.scope ? ` [scope: ${b.scope}]` : "";
+					return `${b.key}${scopeTag} (${(b.sizeBytes / 1024).toFixed(1)} KB, updated ${b.updatedAt})`;
+				})
 				.join("\n");
 		});
 	});
@@ -349,17 +361,46 @@ program
 	.description(
 		[
 			"Get the contents of a named memory block. Returns the full text",
-			"value, or an error if the block doesn't exist.",
+			"value, or an error if the block doesn't exist. When multiple",
+			"scopes exist for the same key, use --scope to disambiguate.",
 		].join(" "),
 	)
+	.option("--scope <scope>", "Block scope (default: global scope '')")
 	.option("--json", "Output as JSON")
-	.action((agent: string, key: string, opts: { json?: boolean }) => {
+	.action((agent: string, key: string, opts: { json?: boolean; scope?: string }) => {
 		const dbPath = resolveDbPath(program);
 		const db = openDb(dbPath);
 
-		const row = db
-			.prepare("SELECT * FROM memory_blocks WHERE agent_id = ? AND key = ?")
-			.get(agent, key) as BlockRow | undefined;
+		let row: BlockRow | undefined;
+		if (opts.scope !== undefined) {
+			row = db
+				.prepare("SELECT * FROM memory_blocks WHERE agent_id = ? AND scope = ? AND key = ?")
+				.get(agent, opts.scope, key) as BlockRow | undefined;
+		} else {
+			// No scope specified — find all scopes for this key to detect ambiguity
+			const rows = db
+				.prepare("SELECT * FROM memory_blocks WHERE agent_id = ? AND key = ?")
+				.all(agent, key) as BlockRow[];
+			if (rows.length > 1) {
+				const scopes = rows.map((r) => (r.scope === "" ? "(global)" : r.scope)).join(", ");
+				if (opts.json) {
+					console.log(
+						JSON.stringify(
+							{ error: "ambiguous_scope", key, scopes: rows.map((r) => r.scope) },
+							null,
+							2,
+						),
+					);
+				} else {
+					console.error(
+						`Block "${key}" exists in multiple scopes: ${scopes}. Use --scope to specify.`,
+					);
+				}
+				db.close();
+				process.exit(1);
+			}
+			row = rows[0];
+		}
 		db.close();
 
 		if (!row) {
@@ -372,7 +413,7 @@ program
 		}
 
 		output(
-			{ key: row.key, updatedAt: row.updated_at, value: row.value },
+			{ key: row.key, scope: row.scope, updatedAt: row.updated_at, value: row.value },
 			opts.json ?? false,
 			(d) => d.value,
 		);
@@ -495,17 +536,17 @@ program
 			return;
 		}
 
-		// Delete in a transaction, resurrecting superseded chunks
+		// Delete in a transaction, resurrecting superseded chunks (scoped)
 		const deleted = db.transaction(() => {
 			let count = 0;
 			for (const id of existing) {
-				const agentRow = db.prepare("SELECT agent_id FROM chunks WHERE id = ?").get(id) as
-					| AgentIdRow
+				const row = db.prepare("SELECT agent_id, scope FROM chunks WHERE id = ?").get(id) as
+					| { agent_id: string; scope: string }
 					| undefined;
-				if (agentRow) {
+				if (row) {
 					db.prepare(
-						"UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ? AND agent_id = ?",
-					).run(id, agentRow.agent_id);
+						"UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ? AND agent_id = ? AND scope = ?",
+					).run(id, row.agent_id, row.scope);
 					db.prepare("DELETE FROM chunks WHERE id = ?").run(id);
 					count++;
 				}
@@ -609,6 +650,7 @@ program
 			agentId: agent,
 			blocks: blocks.map((b) => ({
 				key: b.key,
+				scope: b.scope,
 				updatedAt: b.updated_at,
 				value: b.value,
 			})),
@@ -654,6 +696,7 @@ interface ExportedChunk {
 
 interface ExportedBlock {
 	readonly key: string;
+	readonly scope?: string;
 	readonly updatedAt: string;
 	readonly value: string;
 }
@@ -692,6 +735,48 @@ program
 			process.exit(1);
 		}
 
+		if (data.version !== undefined && data.version !== 1) {
+			console.error(
+				`Error: unsupported export version ${String(data.version)} (this CLI supports version 1)`,
+			);
+			process.exit(1);
+		}
+
+		// Validate chunk shapes before importing
+		for (let i = 0; i < data.chunks.length; i++) {
+			const c = data.chunks[i];
+			if (
+				!c?.id ||
+				!c.content ||
+				!c.kind ||
+				!c.embedding_base64 ||
+				!c.created_at ||
+				!c.last_accessed_at
+			) {
+				console.error(
+					`Error: chunk at index ${i} is missing required fields (id, content, kind, embedding_base64, created_at, last_accessed_at)`,
+				);
+				process.exit(1);
+			}
+			if (c.kind !== "fact" && c.kind !== "memory") {
+				console.error(
+					`Error: chunk at index ${i} has invalid kind "${c.kind}" (expected "fact" or "memory")`,
+				);
+				process.exit(1);
+			}
+		}
+
+		// Validate block shapes before importing
+		for (let i = 0; i < data.blocks.length; i++) {
+			const b = data.blocks[i];
+			if (!b?.key || !b.value || !b.updatedAt) {
+				console.error(
+					`Error: block at index ${i} is missing required fields (key, value, updatedAt)`,
+				);
+				process.exit(1);
+			}
+		}
+
 		const db = new Database(dbPath);
 		initSchema(db);
 
@@ -703,8 +788,8 @@ program
 		`);
 
 		const upsertBlock = db.prepare(`
-			INSERT OR IGNORE INTO memory_blocks (agent_id, key, value, updated_at)
-			VALUES (@agent_id, @key, @value, @updated_at)
+			INSERT OR IGNORE INTO memory_blocks (agent_id, scope, key, value, updated_at)
+			VALUES (@agent_id, @scope, @key, @value, @updated_at)
 		`);
 
 		let chunksInserted = 0;
@@ -734,6 +819,7 @@ program
 				const result = upsertBlock.run({
 					agent_id: data.agentId,
 					key: b.key,
+					scope: b.scope ?? "",
 					updated_at: b.updatedAt,
 					value: b.value,
 				});
