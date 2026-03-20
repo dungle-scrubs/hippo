@@ -235,6 +235,15 @@ if (config.transport === "stdio") {
 	const transport = new StdioServerTransport();
 	await mcp.connect(transport);
 	console.error("Hippo MCP server running on stdio");
+
+	process.on("SIGTERM", () => {
+		db.close();
+		process.exit(0);
+	});
+	process.on("SIGINT", () => {
+		db.close();
+		process.exit(0);
+	});
 } else {
 	const transports = new Map<string, SSEServerTransport>();
 
@@ -283,4 +292,30 @@ if (config.transport === "stdio") {
 		console.error(`  Messages:     POST /messages?sessionId=<id>`);
 		console.error(`  Health:       GET  /health`);
 	});
+
+	/**
+	 * Graceful shutdown — close all SSE transports, stop accepting
+	 * connections, and close the SQLite database handle.
+	 */
+	function shutdown(signal: string): void {
+		console.error(`\n${signal} received, shutting down...`);
+		for (const transport of transports.values()) {
+			transport.close();
+		}
+		transports.clear();
+		httpServer.close(() => {
+			db.close();
+			console.error("Hippo MCP server stopped.");
+			process.exit(0);
+		});
+		// Force exit after 5s if connections don't drain
+		setTimeout(() => {
+			console.error("Forced shutdown after timeout.");
+			db.close();
+			process.exit(1);
+		}, 5_000).unref();
+	}
+
+	process.on("SIGTERM", () => shutdown("SIGTERM"));
+	process.on("SIGINT", () => shutdown("SIGINT"));
 }
