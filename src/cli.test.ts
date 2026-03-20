@@ -8,7 +8,8 @@ import { initSchema } from "./schema.js";
 import { embeddingToBuffer } from "./similarity.js";
 import { ulid } from "./ulid.js";
 
-const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
+const CLI = join(import.meta.dirname, "cli.ts");
+const TSX = join(import.meta.dirname, "..", "node_modules", ".bin", "tsx");
 const AGENT = "test-agent";
 
 /**
@@ -18,7 +19,7 @@ const AGENT = "test-agent";
  * @returns stdout as string
  */
 function hippo(...args: string[]): string {
-	return execFileSync("node", [CLI, ...args], {
+	return execFileSync(TSX, [CLI, ...args], {
 		encoding: "utf-8",
 		timeout: 10_000,
 	}).trim();
@@ -32,7 +33,7 @@ function hippo(...args: string[]): string {
  */
 function hippoFail(...args: string[]): string {
 	try {
-		execFileSync("node", [CLI, ...args], {
+		execFileSync(TSX, [CLI, ...args], {
 			encoding: "utf-8",
 			timeout: 10_000,
 		});

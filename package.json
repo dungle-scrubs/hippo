@@ -52,6 +52,7 @@
 		"@mariozechner/pi-ai": "0.52.12",
 		"@types/better-sqlite3": "^7.6.13",
 		"husky": "^9.1.7",
+		"tsx": "^4.21.0",
 		"typescript": "^5.9.3",
 		"vitest": "^4.0.18"
 	},
