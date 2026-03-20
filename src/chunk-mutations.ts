@@ -97,12 +97,18 @@ export async function updateChunk(
  */
 export function deleteChunk(db: Database, chunkId: string): boolean {
 	const runDelete = db.transaction((id: string): boolean => {
-		const result = db.prepare("DELETE FROM chunks WHERE id = ?").run(id);
-		if (result.changes === 0) {
+		// Read agent_id + scope before deleting — needed for scoped supersession cleanup.
+		const row = db.prepare("SELECT agent_id, scope FROM chunks WHERE id = ?").get(id) as
+			| { agent_id: string; scope: string }
+			| undefined;
+		if (!row) {
 			return false;
 		}
 
-		db.prepare("UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ?").run(id);
+		db.prepare("DELETE FROM chunks WHERE id = ?").run(id);
+		db.prepare(
+			"UPDATE chunks SET superseded_by = NULL WHERE superseded_by = ? AND agent_id = ? AND scope = ?",
+		).run(id, row.agent_id, row.scope);
 		return true;
 	});
 
