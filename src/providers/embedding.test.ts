@@ -36,6 +36,19 @@ beforeAll(async () => {
 				return;
 			}
 
+			// Simulate empty data response for testing guard
+			if (parsed.input === "__empty_data__") {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(
+					JSON.stringify({
+						data: [],
+						model: parsed.model,
+						usage: { prompt_tokens: 0, total_tokens: 0 },
+					}),
+				);
+				return;
+			}
+
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(
 				JSON.stringify({
@@ -98,6 +111,16 @@ describe("createEmbeddingProvider", () => {
 		});
 
 		await expect(embed("test")).rejects.toThrow("Embedding API error 401");
+	});
+
+	it("throws on empty data array", async () => {
+		const embed = createEmbeddingProvider({
+			apiKey: "test-key",
+			baseUrl,
+			model: "test-model",
+		});
+
+		await expect(embed("__empty_data__")).rejects.toThrow("Embedding API returned no data");
 	});
 
 	it("respects abort signal", async () => {

@@ -23,8 +23,15 @@ beforeAll(async () => {
 				return;
 			}
 
-			// Echo back the user's last message as the response
+			// Simulate empty choices for testing guard
 			const lastMsg = parsed.messages[parsed.messages.length - 1];
+			if (lastMsg.content === "__empty_choices__") {
+				res.writeHead(200, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ choices: [] }));
+				return;
+			}
+
+			// Echo back the user's last message as the response
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(
 				JSON.stringify({
@@ -90,6 +97,22 @@ describe("createLlmProvider", () => {
 
 		const result = await llm.complete([msg as UserMessage], "system");
 		expect(result).toBe("echo: direct string");
+	});
+
+	it("throws on empty choices array", async () => {
+		const llm = createLlmProvider({
+			apiKey: "test-key",
+			baseUrl,
+			model: "test-model",
+		});
+
+		const msg: UserMessage = {
+			content: [{ type: "text", text: "__empty_choices__" }],
+			role: "user",
+			timestamp: Date.now(),
+		};
+
+		await expect(llm.complete([msg], "system")).rejects.toThrow("LLM API returned no choices");
 	});
 
 	it("throws on auth failure", async () => {
