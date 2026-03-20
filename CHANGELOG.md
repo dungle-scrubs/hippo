@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.2](https://github.com/dungle-scrubs/hippo/compare/hippo-v0.2.1...hippo-v0.2.2) (2026-03-20)
+
+
+### Fixed
+
+* audit findings — scope safety, validation, server hardening ([#24](https://github.com/dungle-scrubs/hippo/issues/24)) ([5fd294e](https://github.com/dungle-scrubs/hippo/commit/5fd294e837ddf8607c893a41639722cce3e7b1cf))
+
+
+### Maintenance
+
+* add manual dispatch trigger for npm publish workflow ([#9](https://github.com/dungle-scrubs/hippo/issues/9)) ([64cbf7c](https://github.com/dungle-scrubs/hippo/commit/64cbf7c982b7ff1a90c7eac5ff292441de3d3a7d))
+
 ## [0.2.1](https://github.com/dungle-scrubs/hippo/compare/hippo-v0.2.0...hippo-v0.2.1) (2026-02-26)
 
 
